@@ -1,40 +1,71 @@
-# System to automatically build EC2 from CSV files
+# CSVファイルからEC2を自動構築するシステム
 
-## Overview
+## 概要
 
-This system automatically builds an EC2 server on AWS just by uploading a CSV file describing the server specifications to a specific location.
+このシステムは、サーバーのスペックを記述したCSVファイルを特定の場所にアップロードするだけで、AWS上にEC2サーバーを自動で構築します。
 
-It is a non-engineer-friendly configuration that allows you to build a server just by preparing a CSV file with a familiar spreadsheet software, even without specialized knowledge.
+専門知識がない非エンジニアの方でも、使い慣れた表計算ソフトでCSVファイルを準備するだけでサーバーを構築できる、分かりやすい構成を目指しました。
 
-## Architecture Diagram
+---
 
-The overall picture of this system is as follows.
+## アーキテクチャ図
+
+このシステムの全体像は以下の通りです。
 
 <p align="center">
-  <img src="./images/architecture.png" alt="Architecture Diagram" width="80%">
+  <img src="./images/architecture.png" alt="アーキテクチャ図" width="80%">
 </p>
 
-## Processing Flow
+---
 
-1. **CSV Upload** 📂
-   Upload the CSV file from the user's PC to S3 (file storage location).
-   The user only needs to edit the csv file and hit the bat.
+## 処理の流れ
 
-2. **Lambda Startup** ⚡
-   Lambda (a small program) is automatically started by detecting the file upload.
+1.  **CSVアップロード** 📂
+    ユーザーはPCからS3（ファイルの保管場所）にCSVファイルをアップロードします。CSVファイルを編集し、BATファイルを実行するだけです。
 
-3. **Parameter Reading** 📝
-   Lambda reads the contents of the CSV file (server name, OS type, etc.).
+2.  **Lambda起動** ⚡
+    ファイルのアップロードを検知して、自動的にLambda（プログラム）が起動します。
 
-4. **Instruct CloudFormation** 🗣️
-   Based on the information read, it instructs CloudFormation (a service that creates infrastructure from blueprints) to "create a server like this."
+3.  **パラメータ読み取り** 📝
+    LambdaがCSVファイルの中身（サーバー名やOSの種類など）を読み取ります。
 
-5. **EC2 Server Construction** 🖥️
-   CloudFormation builds the EC2 server as instructed.
+4.  **CloudFormationへの指示** 🗣️
+    読み取った情報を基に、CloudFormation（設計図からインフラを作るサービス）へ「こういうサーバーを作って」と指示を出します。
 
-## Main Features
+5.  **EC2サーバー構築** 🖥️
+    指示通りにCloudFormationがEC2サーバーを構築します。
 
-* **Serverless**: No management server is required to run the automation.
-* **Fully automated**: Once the file is uploaded, the server is completed without any further action.
-* **Cost-effective**: Processing only runs when a file is uploaded, so there are no wasted costs.
-* **Easy to configure**: Server specifications can be managed in the familiar CSV format.
+---
+
+## 主な特徴
+
+* **サーバーレス**: 自動化の仕組みを動かすための管理サーバーは不要です。
+* **完全自動化**: ファイルをアップロードすれば、あとは何もしなくてもサーバーが完成します。
+* **コスト効率**: ファイルがアップロードされた時だけ処理が動くため、無駄なコストがかかりません。
+* **設定が簡単**: サーバーのスペックは、使い慣れたCSV形式で管理できます。
+
+---
+
+## 使い方
+
+### 事前準備
+
+1.  **AWS CLIのインストールと設定**
+    * お使いのPCに[AWS CLI](https://aws.amazon.com/jp/cli/)をインストールしてください。
+    * ターミナル（コマンドプロンプトやPowerShell）で `aws configure` コマンドを実行し、AWSアカウントの認証情報（アクセスキー）を設定します。
+
+2.  **ファイルの準備**
+    * このリポジトリのファイル一式をダウンロードし、同じフォルダに配置します。
+
+### 実行手順
+
+1.  **`sample.csv` を編集する**
+    * `sample.csv` ファイルを表計算ソフトで開き、作成したいEC2の `AmiId` や `SubnetId` などの値を編集して保存します。
+
+2.  **`upload.bat` を実行する**
+    * `upload.bat` ファイルをダブルクリックして実行します。
+    * 黒い画面が表示され、CSVファイルのアップロードが自動的に行われます。
+
+3.  **AWSコンソールで確認する**
+    * アップロードが成功したら、AWSマネジメントコンソールにログインし、EC2のページを開きます。
+    * 新しいEC2インスタンスの作成が開始されていることを確認できます。
