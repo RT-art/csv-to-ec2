@@ -1,2 +1,4 @@
 InstanceType,t2.micro
-AmiId,ami-0c55b159cbfafe1f0
+AmiId,ami-095af7cb7ddb447ef
+VpcId,vpc-040fe8d81d3459616
+SubnetId,subnet-0b642b85327406db4
