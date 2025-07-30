@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates a simple EC2 instance from parameters.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Description: EC2 instance type.
+    Default: t2.micro
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI ID for the EC2 instance.
+
+Resources:
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      Tags:
+        - Key: Name
+          Value: !Sub "Created-from-${AWS::StackName}"
+
+Outputs:
+  InstanceId:
+    Description: The Instance ID of the created EC2 instance.
+    Value: !Ref MyEC2Instance
