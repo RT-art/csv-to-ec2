@@ -30,6 +30,10 @@ Resources:
                 Action:
                   - cloudformation:*
                 Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                Resource: "*"
 
 Outputs:
   LambdaRoleArn:
