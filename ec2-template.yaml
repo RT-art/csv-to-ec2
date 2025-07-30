@@ -9,6 +9,12 @@ Parameters:
   AmiId:
     Type: AWS::EC2::Image::Id
     Description: AMI ID for the EC2 instance.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID to launch the EC2 instance in.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID to launch the EC2 instance in.
 
 Resources:
   MyEC2Instance:
@@ -16,6 +22,7 @@ Resources:
     Properties:
       InstanceType: !Ref InstanceType
       ImageId: !Ref AmiId
+      SubnetId: !Ref SubnetId
       Tags:
         - Key: Name
           Value: !Sub "Created-from-${AWS::StackName}"
