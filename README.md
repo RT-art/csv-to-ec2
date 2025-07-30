@@ -1,46 +1,40 @@
-# CSVファイルからEC2を自動構築するシステム
+# System to automatically build EC2 from CSV files
 
-## 概要
+## Overview
 
-このシステムは、サーバーのスペックなどを記述した**CSVファイル**を特定の場所にアップロードするだけで、自動的にAWS上に**EC2サーバー**を構築します。
+This system automatically builds an EC2 server on AWS just by uploading a CSV file describing the server specifications to a specific location.
 
-専門的な知識がなくても、使い慣れた表計算ソフトでCSVファイルを準備するだけでサーバーを構築できる、**非エンジニアにもやさしい構成**です。
+It is a non-engineer-friendly configuration that allows you to build a server just by preparing a CSV file with a familiar spreadsheet software, even without specialized knowledge.
 
----
+## Architecture Diagram
 
-## アーキテクチャ図
-
-このシステムの全体像は以下の通りです。
+The overall picture of this system is as follows.
 
 <p align="center">
-  <img src="./images/アーキテクチャイメージ.png" alt="アーキテクチャ図" width="80%">
+  <img src="./images/architecture.png" alt="Architecture Diagram" width="80%">
 </p>
 
----
+## Processing Flow
 
-## 処理の流れ
+1. **CSV Upload** 📂
+   Upload the CSV file from the user's PC to S3 (file storage location).
+   The user only needs to edit the csv file and hit the bat.
 
-1.  **CSVアップロード** 📂
-    ユーザーPCからCSVファイルをS3（ファイルの保管場所）にアップロードします。
-    ユーザーは、csvファイルを編集し、batを叩くだけです。
+2. **Lambda Startup** ⚡
+   Lambda (a small program) is automatically started by detecting the file upload.
 
-2.  **Lambda起動** ⚡
-    ファイルのアップロードを検知して、自動的にLambda（小さなプログラム）が起動します。
+3. **Parameter Reading** 📝
+   Lambda reads the contents of the CSV file (server name, OS type, etc.).
 
-3.  **パラメータ読み取り** 📝
-    LambdaはCSVファイルの中身（サーバー名やOSの種類など）を読み取ります。
+4. **Instruct CloudFormation** 🗣️
+   Based on the information read, it instructs CloudFormation (a service that creates infrastructure from blueprints) to "create a server like this."
 
-4.  **CloudFormationへ指示** 🗣️
-    読み取った情報を基に、CloudFormation（設計図からインフラを作るサービス）へ「こういうサーバーを作って」と指示を出します。
+5. **EC2 Server Construction** 🖥️
+   CloudFormation builds the EC2 server as instructed.
 
-5.  **EC2サーバー構築** 🖥️
-    CloudFormationが指示通りに、EC2サーバーを構築します。
+## Main Features
 
----
-
-## 主な特徴
-
-* **サーバーレス**: 自動化を動かすための管理サーバーは不要です。
-* **完全自動化**: ファイルをアップロードすれば、あとは何もしなくてもサーバーが完成します。
-* **コスト効率**: ファイルがアップロードされた時だけ処理が動くため、無駄なコストがかかりません。
-* **設定が簡単**: サーバーのスペックは、使い慣れたCSV形式で管理できます。
+* **Serverless**: No management server is required to run the automation.
+* **Fully automated**: Once the file is uploaded, the server is completed without any further action.
+* **Cost-effective**: Processing only runs when a file is uploaded, so there are no wasted costs.
+* **Easy to configure**: Server specifications can be managed in the familiar CSV format.

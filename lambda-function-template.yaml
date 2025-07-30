@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Deploys the Lambda function for csv-to-ec2.
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket to store the Lambda function code.
+  S3Key:
+    Type: String
+    Description: S3 key for the Lambda function's zip file.
+
+Resources:
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: csv-to-ec2-function
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3Key
+      Role: !ImportValue Lambda-csv-to-ec2-Role-Arn
+      Timeout: 60
+
+Outputs:
+  LambdaFunctionName:
+    Description: The name of the created Lambda function
+    Value: !Ref MyLambdaFunction
+  LambdaFunctionArn:
+    Description: The ARN of the created Lambda function
+    Value: !GetAtt MyLambdaFunction.Arn
+    Export:
+      Name: CsvToEc2LambdaFunctionArn
