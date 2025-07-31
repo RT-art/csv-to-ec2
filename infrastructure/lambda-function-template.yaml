@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Deploys the Lambda function for csv-to-ec2.
 
+# S3の中にあるlambdaコードを取得
 Parameters:
   S3BucketName:
     Type: String
@@ -10,37 +11,42 @@ Parameters:
     Description: S3 key for the Lambda function's zip file.
 
 Resources:
+  # lambda本体
   MyLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: csv-to-ec2-function
+      FunctionName: csv-to-ec2-function # lambda関数名
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.lambda_handler # pyファイルのエントリーポイント
+      # s3情報をpyにデプロイする
       Code:
         S3Bucket: !Ref S3BucketName
         S3Key: !Ref S3Key
-      Role: !ImportValue Lambda-csv-to-ec2-Role-Arn
+      Role: !ImportValue Lambda-csv-to-ec2-Role-Arn # 別stackで作られたIAMロールのARNを使う
       Timeout: 60
-      # ↓↓↓ 環境変数を追加して、サービスロールのARNをLambdaに渡す ↓↓↓
+      # lambdaの環境変数
+      # 別stackでエキスポートされたサービスロールARN
+      # これでpythonコードでARNが取得できる
       Environment:
         Variables:
-          CFN_SERVICE_ROLE_ARN: !ImportValue CfnServiceRoleArn-CsvToEc2
+          CFN_SERVICE_ROLE_ARN: !ImportValue CfnServiceRoleArn-CsvToEc2 
 
+  #s3からの呼び出しを許可
   MyLambdaFunctionS3Permission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !GetAtt MyLambdaFunction.Arn
-      Action: "lambda:InvokeFunction"
+      Action: "lambda:InvokeFunction" # "Lambda関数実行許可"
       Principal: "s3.amazonaws.com"
       SourceArn: !Sub "arn:aws:s3:::${S3BucketName}"
       SourceAccount: !Ref "AWS::AccountId"
 
 Outputs:
   LambdaFunctionName:
-    Description: The name of the created Lambda function
+    Description: lambdaの名前
     Value: !Ref MyLambdaFunction
   LambdaFunctionArn:
-    Description: The ARN of the created Lambda function
+    Description: lambdaのARN
     Value: !GetAtt MyLambdaFunction.Arn
     Export:
       Name: CsvToEc2LambdaFunctionArn

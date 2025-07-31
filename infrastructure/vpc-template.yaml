@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: A VPC with a true private subnet and VPC Endpoints for SSM.
+Description: SSM接続可能なプライベートサブネットを持つVPCです。
 
 Resources:
-  # VPC自体の定義
+
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -13,31 +13,28 @@ Resources:
         - Key: Name
           Value: vpc-csv-to-ec2
 
-  # Private Subnetの定義 (インターネットへのルートなし)
   PrivateSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
       AvailabilityZone: "ap-northeast-1a"
-      MapPublicIpOnLaunch: false # パブリックIPは不要
+      MapPublicIpOnLaunch: false 
       Tags:
         - Key: Name
           Value: private-subnet-csv-to-ec2
 
-  # VPCエンドポイント用のセキュリティグループ
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: "Allow traffic from within the VPC to the VPC Endpoints"
+      GroupDescription: "VPC内通信をVPCエンドポイントに接続出来るようにする"
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          CidrIp: !GetAtt VPC.CidrBlock # VPC内からのHTTPS通信を許可
+          CidrIp: !GetAtt VPC.CidrBlock
 
-  # --- SSM接続に必要なVPCエンドポイント群 ---
   SSMEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
