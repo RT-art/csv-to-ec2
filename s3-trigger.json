@@ -1,0 +1,9 @@
+{
+  "LambdaFunctionConfigurations": [
+    {
+      "Id": "s3-csv-trigger-for-ec2-creation",
+      "LambdaFunctionArn": "arn:aws:lambda:ap-northeast-1:911167886978:function:csv-to-ec2-function",
+      "Events": ["s3:ObjectCreated:*"]
+    }
+  ]
+}

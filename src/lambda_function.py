@@ -46,11 +46,16 @@ def lambda_handler(event, context):
         
         stack_name = f"ec2-{os.path.splitext(file_key)[0].replace('.','-')}-stack"
         
-        # CSVファイルを読み込み
+        # Use DictReader to read the CSV, treating the first row as headers.
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
         csv_content = response['Body'].read().decode('utf-8').splitlines()
-        csv_reader = csv.reader(csv_content)
-        params_dict = {row[0]: row[1] for row in csv_reader if len(row) == 2}
+        csv_reader = csv.DictReader(csv_content)
+        
+        # Assuming one data row per CSV file.
+        data_rows = list(csv_reader)
+        if not data_rows:
+            raise ValueError("CSV file is empty or contains only headers.")
+        params_dict = data_rows[0]
 
         # 削除処理の判定
         if params_dict.get('Action', '').lower() == 'delete':
@@ -77,7 +82,8 @@ def lambda_handler(event, context):
         print(f"Parameters for CloudFormation: {params_list}")
         print(f"Tags for CloudFormation: {tags_list}")
         
-        template_url = f"https://{bucket_name}.s3.ap-northeast-1.amazonaws.com/ec2-template.yaml"
+        aws_region = os.environ.get('AWS_REGION')
+        template_url = f"https://{bucket_name}.s3.{aws_region}.amazonaws.com/ec2-template.yaml"
 
         # スタックが存在するか確認し、存在すれば更新、なければ作成 (Upsert)
         try:
