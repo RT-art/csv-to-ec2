@@ -8,6 +8,8 @@ s3_client = boto3.client('s3')
 cfn_client = boto3.client('cloudformation')
 
 MANIFEST_FILE_KEY = 'ami_manifest.json'
+# 環境変数からサービスロールARNを取得
+CFN_SERVICE_ROLE_ARN = os.environ.get('CFN_SERVICE_ROLE_ARN')
 
 def get_ami_id_from_manifest(bucket, ami_name):
     try:
@@ -25,6 +27,11 @@ def get_ami_id_from_manifest(bucket, ami_name):
         raise
 
 def lambda_handler(event, context):
+    # --- サービスロールが設定されているか最初にチェック ---
+    if not CFN_SERVICE_ROLE_ARN:
+        print("Fatal Error: CFN_SERVICE_ROLE_ARN environment variable not set.")
+        return {'statusCode': 500, 'body': 'Service role not configured.'}
+
     try:
         if 'Records' not in event:
             return {'statusCode': 400, 'body': 'Not an S3 event.'}
@@ -72,6 +79,7 @@ def lambda_handler(event, context):
         
         template_url = f"https://{bucket_name}.s3.ap-northeast-1.amazonaws.com/ec2-template.yaml"
 
+        # スタックが存在するか確認し、存在すれば更新、なければ作成 (Upsert)
         try:
             cfn_client.describe_stacks(StackName=stack_name)
             print(f"Stack {stack_name} exists. Updating stack...")
@@ -79,7 +87,8 @@ def lambda_handler(event, context):
                 StackName=stack_name,
                 TemplateURL=template_url,
                 Parameters=params_list,
-                Tags=tags_list
+                Tags=tags_list,
+                RoleARN=CFN_SERVICE_ROLE_ARN # ← サービスロールを指定
             )
             print(f"Stack {stack_name} update initiated.")
         except ClientError as e:
@@ -89,7 +98,8 @@ def lambda_handler(event, context):
                     StackName=stack_name,
                     TemplateURL=template_url,
                     Parameters=params_list,
-                    Tags=tags_list
+                    Tags=tags_list,
+                    RoleARN=CFN_SERVICE_ROLE_ARN # ← サービスロールを指定
                 )
                 print(f"Stack {stack_name} creation initiated.")
             else:
