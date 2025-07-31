@@ -88,7 +88,8 @@ def lambda_handler(event, context):
                 TemplateURL=template_url,
                 Parameters=params_list,
                 Tags=tags_list,
-                RoleARN=CFN_SERVICE_ROLE_ARN # ← サービスロールを指定
+                RoleARN=CFN_SERVICE_ROLE_ARN,
+                Capabilities=['CAPABILITY_NAMED_IAM']  # ← 修正：Capabilitiesを追加
             )
             print(f"Stack {stack_name} update initiated.")
         except ClientError as e:
@@ -99,7 +100,8 @@ def lambda_handler(event, context):
                     TemplateURL=template_url,
                     Parameters=params_list,
                     Tags=tags_list,
-                    RoleARN=CFN_SERVICE_ROLE_ARN # ← サービスロールを指定
+                    RoleARN=CFN_SERVICE_ROLE_ARN,
+                    Capabilities=['CAPABILITY_NAMED_IAM']  # ← 修正：Capabilitiesを追加
                 )
                 print(f"Stack {stack_name} creation initiated.")
             else:
