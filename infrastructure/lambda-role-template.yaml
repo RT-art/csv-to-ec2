@@ -30,10 +30,9 @@ Resources:
                   - "cloudformation:UpdateStack"
                   - "cloudformation:DeleteStack"
                 Resource: "*"
-              # ↓↓↓ PassRoleの権限を、特定のサービスロールに限定する ↓↓↓
               - Effect: Allow
                 Action: iam:PassRole
-                Resource: !ImportValue CfnServiceRoleArn-CsvToEc2 # ExportされたサービスロールのARNを直接参照
+                Resource: !ImportValue CfnServiceRoleArn-CsvToEc2
 
 Outputs:
   LambdaRoleArn:

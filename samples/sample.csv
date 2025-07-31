@@ -1,0 +1,6 @@
+InstanceType,t2.micro
+AmiName,test
+VpcId,vpc-02e3950cc4633b1cd
+SubnetId,subnet-0333eba90050599dc
+SshAccessCidr,0.0.0.0/0
+Tag-Name,ssm-test

@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates a simple EC2 instance manageable via SSM.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.micro
+  AmiId:
+    Type: AWS::EC2::Image::Id
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  SshAccessCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+
+Resources:
+  # --- EC2インスタンス用のIAMロールとプロファイル ---
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "EC2Role-for-${AWS::StackName}"
+      # このロールはEC2サービスに引き受けられる
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      # AWSが用意したSSM管理用のポリシーをアタッチ
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "EC2Profile-for-${AWS::StackName}"
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # セキュリティグループ（SSHルールは削除し、一旦空にしておく）
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for the private EC2 instance"
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "sg-for-${AWS::StackName}"
+
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      # ↓↓↓ 作成したIAMインスタンスプロファイルをEC2に関連付ける ↓↓↓
+      IamInstanceProfile: !Ref EC2InstanceProfile
+
+Outputs:
+  InstanceId:
+    Description: The Instance ID of the created EC2 instance.
+    Value: !Ref MyEC2Instance
