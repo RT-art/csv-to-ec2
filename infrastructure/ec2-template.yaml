@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Creates a simple EC2 instance manageable via SSM.
+Description: SSM接続可能な、EC2を作成するテンプレートです。
 
+# CSVに具体的なデータを定義するため、ここでは関数で受け皿を作る
 Parameters:
   InstanceType:
     Type: String
@@ -11,17 +12,14 @@ Parameters:
     Type: AWS::EC2::VPC::Id
   SubnetId:
     Type: AWS::EC2::Subnet::Id
-  SshAccessCidr:
-    Type: String
-    Default: "0.0.0.0/0"
 
+# EC2のIAMロールを定義
+# EC2→SSMでアクセス出来る様にする（SSM→EC2という通信の流れを想像するが、EC2からの返答もあるため）
 Resources:
-  # --- EC2インスタンス用のIAMロールとプロファイル ---
   EC2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "EC2Role-for-${AWS::StackName}"
-      # このロールはEC2サービスに引き受けられる
+      RoleName: !Sub "EC2Role-for-${AWS::StackName}" # stack名を使って被らない名前にできる
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -29,10 +27,10 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
-      # AWSが用意したSSM管理用のポリシーをアタッチ
       ManagedPolicyArns:
         - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 
+  # EC2には直でIAMロールを割り当てられない。一枚インスタンスプロファイルを挟む必要がある
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -40,16 +38,19 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
-  # セキュリティグループ（SSHルールは削除し、一旦空にしておく）
+  # セキュリティグループはデフォルト設定
+  # SGのデフォルト設定は、インバウンド全て拒否、アウトバウンド全て許可
+  # つまりこの設定だけで、SSMのみ接続可能
   MySecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: "Security group for the private EC2 instance"
+      GroupDescription: "EC2のセキュリティグループ"
       VpcId: !Ref VpcId
       Tags:
         - Key: Name
           Value: !Sub "sg-for-${AWS::StackName}"
 
+  # ここでEC2の物体を作る
   MyEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
@@ -63,5 +64,5 @@ Resources:
 
 Outputs:
   InstanceId:
-    Description: The Instance ID of the created EC2 instance.
+    Description: インスタンスID
     Value: !Ref MyEC2Instance
