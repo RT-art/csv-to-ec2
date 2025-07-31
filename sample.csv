@@ -3,4 +3,4 @@ AmiName,test
 VpcId,vpc-040fe8d81d3459616
 SubnetId,subnet-0b642b85327406db4
 SshAccessCidr,0.0.0.0/0
-Tag-Name,My-Secure-EC2
+Tag-Name,My-Updated-EC2-from-CLI
