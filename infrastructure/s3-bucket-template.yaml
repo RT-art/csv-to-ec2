@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Creates an S3 bucket for storing templates, Lambda code, and triggering Lambda.
+Description: lambda関数をトリガーとするs3バケットのテンプレート
 
-# 
+# 手入力でARNを指定
+# イベント通知先のlambdaは、再利用できるように
 Parameters:
   LambdaFunctionArn:
     Type: String
@@ -12,16 +13,16 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: rt-ec2-to-csv-bucket
-      # ↓↓↓ イベント通知設定を丸ごと追加 ↓↓↓
+      # イベント通知設定
       NotificationConfiguration:
         LambdaConfigurations:
-          - Event: "s3:ObjectCreated:*"
-            Function: !Ref LambdaFunctionArn
+          - Event: "s3:ObjectCreated:*" # s3にオブジェクトが作られたら通知
+            Function: !Ref LambdaFunctionArn # 手入力したlambdaのarn
             Filter:
               S3Key:
                 Rules:
                   - Name: suffix
-                    Value: ".csv"
+                    Value: ".csv" #  ここで、csvの場合のみlambdaが動くように指定
 
 Outputs:
   BucketName:

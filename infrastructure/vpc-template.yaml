@@ -24,17 +24,22 @@ Resources:
         - Key: Name
           Value: private-subnet-csv-to-ec2
 
+  # ssmエンドポイントのSG
+  # vpc内のec2のみが接続できる
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "VPC内通信をVPCエンドポイントに接続出来るようにする"
       VpcId: !Ref VPC
+      # インバウンド
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          CidrIp: !GetAtt VPC.CidrBlock
+          CidrIp: !GetAtt VPC.CidrBlock # このstackのvpcのcidrを取得　インバウンド通信は、このcidr内のみに指定
 
+  # ssmの設定
+  # ssmは、ssm,ssmmessage,ec2messageの三つのエンドポイントが必要
   SSMEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
