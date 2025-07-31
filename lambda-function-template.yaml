@@ -4,44 +4,43 @@ Description: Deploys the Lambda function for csv-to-ec2.
 Parameters:
   S3BucketName:
     Type: String
-    Description: Name of the S3 bucket that will trigger the Lambda function (e.g., rt-ec2-to-csv-bucket).
+    Description: Name of the S3 bucket to store the Lambda function code.
   S3Key:
     Type: String
-    Description: S3 key for the Lambda function's zip file (e.g., lambda_function.zip).
+    Description: S3 key for the Lambda function's zip file.
 
 Resources:
-  # Lambda関数自体を定義するリソース
   MyLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: csv-to-ec2-function # Lambda関数の名前
-      Runtime: python3.11 # ランタイム
-      Handler: lambda_function.lambda_handler # ハンドラファイルと関数名
+      FunctionName: csv-to-ec2-function
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
       Code:
-        S3Bucket: !Ref S3BucketName # Lambdaコードが保存されているS3バケット
-        S3Key: !Ref S3Key # LambdaコードのS3キー（ZIPファイル名）
-      Role: !ImportValue Lambda-csv-to-ec2-Role-Arn # 別のスタックでエクスポートされたIAMロールのARNを参照
-      Timeout: 60 # Lambda関数のタイムアウト時間（秒）
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3Key
+      Role: !ImportValue Lambda-csv-to-ec2-Role-Arn
+      Timeout: 60
+      # ↓↓↓ 環境変数を追加して、サービスロールのARNをLambdaに渡す ↓↓↓
+      Environment:
+        Variables:
+          CFN_SERVICE_ROLE_ARN: !ImportValue CfnServiceRoleArn-CsvToEc2
 
-  # S3がLambda関数を呼び出すための権限を定義するリソース
-  # MyLambdaFunctionS3Permission は MyLambdaFunction のネストではなく、独立したリソースである必要があります
   MyLambdaFunctionS3Permission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt MyLambdaFunction.Arn # Lambda関数のARNを指定
-      Action: "lambda:InvokeFunction" # 許可するアクション
-      Principal: "s3.amazonaws.com" # S3サービスからの呼び出しを許可
-      # S3イベントのソースとなるバケットのARNを指定
-      # SourceAccount を追加することで、特定のアカウントからのトリガーのみを許可し、セキュリティを強化
-      SourceArn: !Sub "arn:aws:s3:::${S3BucketName}" 
-      SourceAccount: !Ref "AWS::AccountId" # テンプレートがデプロイされるアカウントのID
+      FunctionName: !GetAtt MyLambdaFunction.Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "s3.amazonaws.com"
+      SourceArn: !Sub "arn:aws:s3:::${S3BucketName}"
+      SourceAccount: !Ref "AWS::AccountId"
 
 Outputs:
   LambdaFunctionName:
     Description: The name of the created Lambda function
-    Value: !Ref MyLambdaFunction # Lambda関数の論理IDを参照
+    Value: !Ref MyLambdaFunction
   LambdaFunctionArn:
     Description: The ARN of the created Lambda function
-    Value: !GetAtt MyLambdaFunction.Arn # Lambda関数のARNをGetAttで取得
+    Value: !GetAtt MyLambdaFunction.Arn
     Export:
-      Name: CsvToEc2LambdaFunctionArn # 他のスタックから参照できるようにエクスポート
+      Name: CsvToEc2LambdaFunctionArn
