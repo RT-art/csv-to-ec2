@@ -12,7 +12,18 @@ Resources:
   MyS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: rt-ec2-to-csv-bucket
+      BucketName: !Sub "csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
       # イベント通知設定
       NotificationConfiguration:
         LambdaConfigurations:
@@ -22,7 +33,7 @@ Resources:
               S3Key:
                 Rules:
                   - Name: suffix
-                    Value: ".csv" #  ここで、csvの場合のみlambdaが動くように指定
+                    Value: ".csv" # csvの場合のみlambdaが動くように指定
 
 Outputs:
   BucketName:

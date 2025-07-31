@@ -11,7 +11,7 @@ Resources:
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: vpc-csv-to-ec2
+          Value: !Sub "${AWS::StackName}-vpc"
 
   PrivateSubnet:
     Type: AWS::EC2::Subnet
@@ -22,7 +22,7 @@ Resources:
       MapPublicIpOnLaunch: false 
       Tags:
         - Key: Name
-          Value: private-subnet-csv-to-ec2
+          Value: !Sub "${AWS::StackName}-subnet"
 
   # ssmエンドポイントのSG
   # vpc内のec2のみが接続できる
