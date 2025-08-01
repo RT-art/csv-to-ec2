@@ -1,2 +1,0 @@
-Action,InstanceType,AmiName,VpcId,SubnetId,SshAccessCidr,Tag-Name
-create,t2.micro,test,vpc-02e3950cc4633b1cd,subnet-0333eba90050599dc,0.0.0.0/0,ssm-test

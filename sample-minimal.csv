@@ -1,0 +1,3 @@
+StackName,Action,InstanceType,AmiId,HostName
+ec2-web-01,create,t2.micro,ami-0123456789abcdef0,WEB01
+
