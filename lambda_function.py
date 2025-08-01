@@ -50,8 +50,8 @@ def delete_stack(stack_name):
         else:
             raise
 
-def upsert_stack(stack_name: str, parameters: List[Dict[str, str]], tags: List[Dict[str, str]]) -> None:
-    """CloudFormationスタックを作成または更新
+def upsert_stack(stack_name: str, parameters: List[Dict[str, str]], tags: List[Dict[str, str]]):
+    """CloudFormationスタックを作成または更新し、'create'か'update'を返す
     
     Args:
         stack_name: スタック名
@@ -71,13 +71,16 @@ def upsert_stack(stack_name: str, parameters: List[Dict[str, str]], tags: List[D
         print(f"Stack {stack_name} exists. Updating stack...")
         cfn_client.update_stack(**common_args)
         print(f"Stack {stack_name} update initiated.")
+        return 'update'
     except ClientError as e:
         if "does not exist" in e.response['Error']['Message']:
             print(f"Stack {stack_name} does not exist. Creating stack...")
             cfn_client.create_stack(**common_args)
             print(f"Stack {stack_name} creation initiated.")
+            return 'create'
         elif "No updates are to be performed" in e.response['Error']['Message']:
             print(f"No changes detected for stack {stack_name}. Update skipped.")
+            return None
         else:
             raise
 
@@ -101,33 +104,6 @@ def invoke_ssm_run_command(instance_id, hostname):
         print(f"SSM command sent to instance {instance_id} successfully.")
     except ClientError as e:
         print(f"Failed to send SSM command to instance {instance_id}: {e}")
-
-def wait_for_instance_id(stack_name: str, max_attempts: int = 8, delay: int = 15) -> Optional[str]:
-    """スタックからインスタンスIDを取得（リトライ付き）
-    
-    Args:
-        stack_name: CloudFormationスタック名
-        max_attempts: 最大リトライ回数
-        delay: リトライ間隔（秒）
-        
-    Returns:
-        Optional[str]: インスタンスID。見つからない場合はNone
-    """
-    for i in range(max_attempts):
-        try:
-            stack_info = cfn_client.describe_stacks(StackName=stack_name)
-            instance_id = next(
-                (o['OutputValue'] for o in stack_info['Stacks'][0]['Outputs'] 
-                 if o['OutputKey'] == 'InstanceId'),
-                None
-            )
-            if instance_id:
-                print(f"Found InstanceId: {instance_id}")
-                return instance_id
-        except ClientError:
-            print(f"Attempt {i+1}: Could not describe stack yet. Retrying...")
-        time.sleep(delay)
-    return None
 
 def process_csv_row(row: Dict[str, str]) -> None:
     """CSVの1行を処理してEC2インスタンスを作成または削除
@@ -175,17 +151,30 @@ def process_csv_row(row: Dict[str, str]) -> None:
         cfn_tags.append({'Key': 'Name', 'Value': new_hostname})
     
     # スタックの作成/更新
-    upsert_stack(stack_name, cfn_params, cfn_tags)
+    action_type = upsert_stack(stack_name, cfn_params, cfn_tags)
+    if not action_type:
+        return
 
-    # ホスト名の設定
-    if new_hostname:
-        print("Waiting for stack operation to progress...")
-        time.sleep(20)  # 初期待機
-        
-        if instance_id := wait_for_instance_id(stack_name):
+    print(f"Waiting for stack {action_type} to complete...")
+    waiter_type = 'stack_create_complete' if action_type == 'create' else 'stack_update_complete'
+    waiter = cfn_client.get_waiter(waiter_type)
+    try:
+        waiter.wait(
+            StackName=stack_name,
+            WaiterConfig={'Delay': 15, 'MaxAttempts': 40}
+        )
+        print(f"Stack {stack_name} {action_type} completed successfully.")
+        stack_info = cfn_client.describe_stacks(StackName=stack_name)
+        instance_id = next(
+            (o['OutputValue'] for o in stack_info['Stacks'][0]['Outputs'] if o['OutputKey'] == 'InstanceId'),
+            None
+        )
+        if instance_id and new_hostname:
             invoke_ssm_run_command(instance_id, new_hostname)
-        else:
+        elif not instance_id:
             print(f"Could not find InstanceId for stack {stack_name}")
+    except ClientError as e:
+        print(f"Error waiting for stack {stack_name} or getting outputs: {e}")
 
 def lambda_handler(event, context):
     """S3イベントでトリガーされるメイン関数"""
@@ -205,75 +194,10 @@ def lambda_handler(event, context):
     print(f"Processing file: s3://{bucket_name}/{file_key}")
 
     try:
-        for row in parse_csv_data(bucket_name, file_key):
-            stack_name = row.get('StackName')
-            if not stack_name:
-                print("Skipping row due to missing 'StackName'.")
-                continue
-
-            if not stack_name.startswith('ec2-'):
-                print(f"StackName '{stack_name}' must start with 'ec2-'. Skipping.")
-                continue
-
-            # Handle delete action
-            if row.get('Action', '').lower() == 'delete':
-                delete_stack(stack_name)
-                continue
-
-            # Prepare CloudFormation parameters and tags
-            cfn_params = [
-                {'ParameterKey': 'VpcId', 'ParameterValue': VPC_ID},
-                {'ParameterKey': 'SubnetId', 'ParameterValue': SUBNET_ID},
-            ]
-            cfn_tags = []
-            new_hostname = row.get('HostName')
-
-            # Get AmiId directly from CSV
-            ami_id = row.get('AmiId')
-            if ami_id:
-                cfn_params.append({'ParameterKey': 'AmiId', 'ParameterValue': ami_id})
-
-            # Process other parameters and tags from CSV
-            for key, value in row.items():
-                if key.lower().startswith('tag-'):
-                    cfn_tags.append({'Key': key[4:], 'Value': value})
-                elif key not in ['Action', 'StackName', 'HostName', 'AmiId']:
-                    cfn_params.append({'ParameterKey': key, 'ParameterValue': value})
-
-            # Add HostName as the 'Name' tag for visibility in the console
-            if new_hostname:
-                cfn_tags.append({'Key': 'Name', 'Value': new_hostname})
-            
-            # Upsert the stack
-            upsert_stack(stack_name, cfn_params, cfn_tags)
-
-            # Wait and then run SSM command
-            if new_hostname:
-                print("Waiting for stack operation to progress before fetching InstanceId...")
-                time.sleep(20) # Wait for stack creation/update to begin
-                
-                instance_id = None
-                for i in range(8): # Retry for up to ~2 minutes
-                    try:
-                        stack_info = cfn_client.describe_stacks(StackName=stack_name)
-                        instance_id = next(
-                            (o['OutputValue'] for o in stack_info['Stacks'][0]['Outputs'] if o['OutputKey'] == 'InstanceId'),
-                            None
-                        )
-                        if instance_id:
-                            print(f"Found InstanceId: {instance_id}")
-                            break
-                    except ClientError:
-                        print(f"Attempt {i+1}: Could not describe stack yet. Retrying...")
-                    time.sleep(15)
-
-                if instance_id:
-                    invoke_ssm_run_command(instance_id, new_hostname)
-                else:
-                    print(f"Could not find InstanceId for stack {stack_name} after multiple attempts.")
-        
+        rows = parse_csv_data(bucket_name, file_key)
+        for row in rows:
+            process_csv_row(row)
         return {'statusCode': 200, 'body': 'Processing complete.'}
-
     except (ValueError, FileNotFoundError) as e:
         print(f"Configuration Error: {e}")
         return {'statusCode': 400, 'body': str(e)}
