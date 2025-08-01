@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  サーバレスなアーキテクチャで、S3にアップロードされたCSVに基づいてEC2を自動構築する
+
+# このテンプレートに登場するすべてのLambda関数に、一律でこの設定を適用する
+Globals:
+  Function:
+    Timeout: 300 # スタックが完了する前にLambda関数が強制終了してしまい、デプロイが中断される可能性を無くす
+    Runtime: python3.11
+    MemorySize: 256 # メモリによるコスト増加は僅かのため、あげてしまう
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Default: dev
+  RetentionDays:
+    Type: Number
+    Default: 30
+    Description: "S3バケットのオブジェクト保持期間(日数)"
+
+Resources:
+  # ------------------------------------------------------------
+  #  1.AWSネットワーク構築(VPC, Subnet, Endpoints)
+  # ------------------------------------------------------------
+  # EC2構築に必要最低限のNWを構築しています。
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "vpc-${AWS::StackName}"
+        # 共通タグを追加
+        - Key: Environment
+          Value: !Ref Environment  # パラメータとして追加
+        - Key: Project
+          Value: "csv-to-ec2"
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "subnet-${AWS::StackName}"
+        # 共通タグを追加
+        - Key: Environment
+          Value: !Ref Environment  # パラメータとして追加
+        - Key: Project
+          Value: "csv-to-ec2"
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "SSMエンドポイント向けのセキュリティグループ"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !GetAtt VPC.CidrBlock
+
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
+
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
+
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
+
+  # ------------------------------------------------------------
+  #  2.S3構築(csvのpush先)
+  # ------------------------------------------------------------
+  CsvBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        # 共通タグを追加
+        - Key: Environment
+          Value: !Ref Environment  # パラメータとして追加
+        - Key: Project
+          Value: "csv-to-ec2"
+        - Key: ManagedBy
+          Value: "CloudFormation"
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldFiles
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+
+  # ------------------------------------------------------------
+  #  3.IAMロール設定
+  # ------------------------------------------------------------
+
+  # cfnサービスロール設定
+  CfnServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CfnServiceRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: 
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        # CloudFormationサービスロール用
+        - PolicyName: EC2AndIAMManagementPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                Resource: "*"
+
+  # lambdaロール設定
+  LambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "LambdaRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        # Lambda関数用
+        - PolicyName: S3AndCloudFormationAndSsmPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - ssm:SendCommand
+                Resource: "*"
+
+  # ------------------------------------------------------------
+  # 4.lambda構築
+  # ------------------------------------------------------------
+  CsvToEc2Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "CsvToEc2Function-${AWS::StackName}"
+      CodeUri: src/
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaFunctionRole.Arn
+      Environment:
+        Variables:
+          CFN_SERVICE_ROLE_ARN: !GetAtt CfnServiceRole.Arn
+          EC2_TEMPLATE_URL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${CsvBucket}/ec2-template.yaml"
+          VPC_ID: !Ref VPC
+          SUBNET_ID: !Ref PrivateSubnet
+      Events:
+        CsvUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref CsvBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .csv
+      Tags:
+        # 共通タグを追加
+        - Key: Environment
+          Value: !Ref Environment  # パラメータとして追加
+        - Key: Project
+          Value: "csv-to-ec2"
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  CsvToEc2Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Lambda関数のエラー監視"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CsvToEc2Function
+
+  # ------------------------------------------------------------
+  # 5. EC2インスタンス構築
+  # ------------------------------------------------------------
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0123456789abcdef0
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PrivateSubnet
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: !Sub "ec2-instance-${AWS::StackName}"
+        # 共通タグを追加
+        - Key: Environment
+          Value: !Ref Environment  # パラメータとして追加
+        - Key: Project
+          Value: "csv-to-ec2"
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3ReadOnlyAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}/*"
+
+Outputs:
+  VPCId:
+    Description: "EC2インスタンスが作成されるVPCのID"
+    Value: !Ref VPC
+  PrivateSubnetId:
+    Description: "EC2インスタンスが配置されるプライベートサブネットのID"
+    Value: !Ref PrivateSubnet
+  CsvBucketName:
+    Description: "CSVファイルをアップロードするS3バケット名"
+    Value: !Ref CsvBucket
+  CfnServiceRoleArn:
+    Description: "CloudFormationがEC2インスタンスを作成する際に使用するIAMロールのARN"
+    Value: !GetAtt CfnServiceRole.Arn
+  LambdaFunctionRoleArn:
+    Description: "CSV処理とEC2作成を行うLambda関数が使用するIAMロールのARN"
+    Value: !GetAtt LambdaFunctionRole.Arn
+  LambdaFunctionName:
+    Description: "S3へのCSVアップロードをトリガーとして起動するLambda関数の名前"
+    Value: !Ref CsvToEc2Function
+  EC2InstanceId:
+    Description: "作成されたEC2インスタンスのID"
+    Value: !Ref Ec2Instance
