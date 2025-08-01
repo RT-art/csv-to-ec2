@@ -1,0 +1,129 @@
+{
+  "Comment": "A state machine that provisions an EC2 instance via CloudFormation and runs an SSM command.",
+  "StartAt": "Prepare CloudFormation Parameters",
+  "States": {
+    "Prepare CloudFormation Parameters": {
+      "Type": "Pass",
+      "ResultPath": "$.CfnParameters",
+      "Parameters": {
+        "StackName.$": "$.Input.StackName",
+        "TemplateURL": "${Ec2TemplateUrl}",
+        "RoleARN": "${CfnServiceRoleArn}",
+        "Capabilities": [
+          "CAPABILITY_NAMED_IAM"
+        ],
+        "Parameters": [
+          {
+            "ParameterKey": "VpcId",
+            "ParameterValue": "${VpcId}"
+          },
+          {
+            "ParameterKey": "SubnetId",
+            "ParameterValue": "${SubnetId}"
+          },
+          {
+            "ParameterKey": "InstanceType",
+            "ParameterValue.$": "$.Input.InstanceType"
+          },
+          {
+            "ParameterKey": "AmiId",
+            "ParameterValue.$": "$.Input.AmiId"
+          }
+        ]
+      },
+      "Next": "Stack Exists?"
+    },
+    "Stack Exists?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Input.Action",
+          "StringEquals": "create",
+          "Next": "Create Stack"
+        }
+      ],
+      "Default": "Update Stack"
+    },
+    "Create Stack": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::cloudformation:createStack.sync",
+      "Parameters": {
+        "StackName.$": "$.CfnParameters.StackName",
+        "TemplateURL.$": "$.CfnParameters.TemplateURL",
+        "RoleARN.$": "$.CfnParameters.RoleARN",
+        "Capabilities.$": "$.CfnParameters.Capabilities",
+        "Parameters.$": "$.CfnParameters.Parameters"
+      },
+      "ResultPath": "$.CreateStackResult",
+      "Next": "Get Instance ID",
+      "Catch": [
+        {
+          "ErrorEquals": [ "States.ALL" ],
+          "Next": "Provisioning Failed"
+        }
+      ]
+    },
+    "Update Stack": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::cloudformation:updateStack.sync",
+      "Parameters": {
+        "StackName.$": "$.CfnParameters.StackName",
+        "TemplateURL.$": "$.CfnParameters.TemplateURL",
+        "RoleARN.$": "$.CfnParameters.RoleARN",
+        "Capabilities.$": "$.CfnParameters.Capabilities",
+        "Parameters.$": "$.CfnParameters.Parameters"
+      },
+      "ResultPath": "$.UpdateStackResult",
+      "Next": "Get Instance ID",
+      "Catch": [
+        {
+          "ErrorEquals": [ "CloudFormation.AmazonCloudFormationException" ],
+          "Comment": "Catch if no updates are to be performed",
+          "Next": "No Updates To Perform"
+        },
+        {
+          "ErrorEquals": [ "States.ALL" ],
+          "Next": "Provisioning Failed"
+        }
+      ]
+    },
+    "No Updates To Perform": {
+      "Type": "Succeed"
+    },
+    "Get Instance ID": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${GetStackOutputFunctionArn}",
+        "Payload": {
+          "StackName.$": "$.Input.StackName"
+        }
+      },
+      "ResultSelector": {
+        "InstanceId.$": "$.Payload.InstanceId"
+      },
+      "ResultPath": "$.InstanceOutput",
+      "Next": "Run SSM Command",
+      "Catch": [
+        {
+          "ErrorEquals": [ "States.ALL" ],
+          "Next": "Provisioning Failed"
+        }
+      ]
+    },
+    "Run SSM Command": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ssm:sendCommand",
+      "Parameters": {
+        "DocumentName": "${SsmDocumentName}",
+        "InstanceIds.$": "States.Array($.InstanceOutput.InstanceId)"
+      },
+      "End": true
+    },
+    "Provisioning Failed": {
+      "Type": "Fail",
+      "Error": "EC2ProvisioningFailed",
+      "Cause": "The EC2 provisioning process failed. Check the execution history for details."
+    }
+  }
+}

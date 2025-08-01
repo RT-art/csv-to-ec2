@@ -1,0 +1,17 @@
+schemaVersion: "2.2"
+description: "Install Docker and output completion message on Amazon Linux 2 (Idempotent)"
+mainSteps:
+  - action: "aws:runShellScript"
+    name: "InstallDocker"
+    inputs:
+      runCommand:
+        # いずれかのコマンドが失敗したらスクリプトを即座に終了させる
+        - "set -e"
+        # Dockerがインストールされていなければインストールする
+        - "if ! command -v docker &> /dev/null; then sudo yum install -y docker; fi"
+        # Dockerサービスを有効化し、起動する
+        - "sudo systemctl enable docker.service"
+        - "sudo systemctl start docker.service"
+        # ec2-userがdockerグループに所属していなければ追加する
+        - "if ! id -nG 'ec2-user' | grep -qw 'docker'; then sudo usermod -a -G docker ec2-user; fi"
+        - "echo 'Dockerのセットアップが完了しました。'"
