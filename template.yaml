@@ -1,135 +1,108 @@
 AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
 Description: A simple stack to create an EC2 instance from a CSV file in S3 using Lambda.
 
 Resources:
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: LambdaEc2S3Policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: s3:GetObject
-                Resource: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*"
-              - Effect: Allow
-                Action: ec2:RunInstances
-                Resource:
-                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
-                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
-                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
-                  - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
-                  - !Sub "arn:aws:ec2:${AWS::Region}::image/*" # <-- あなたが追加した正しい修正
-              - Effect: Allow
-                Action: ec2:CreateTags
-                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-                Condition:
-                  StringEquals:
-                    ec2:CreateAction: "RunInstances"
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "arn:aws:logs:*:*:*"
-
+  # ------------------------------------
+  # 1. CSVをアップロードするS3バケット
+  # ------------------------------------
   S3Bucket:
     Type: AWS::S3::Bucket
-    DependsOn:
-      - S3InvokePermission
+    DependsOn: S3InvokePermission
     Properties:
       BucketName: !Sub "csv-ec2-creator-${AWS::AccountId}-${AWS::Region}"
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*
-            Function: !GetAtt LambdaFunction.Arn
+            Function: !GetAtt CsvToEc2Function.Arn
             Filter:
               S3Key:
                 Rules:
                   - Name: suffix
                     Value: .csv
 
-  LambdaFunction:
-    Type: AWS::Lambda::Function
+  # ------------------------------------
+  # 2. S3イベントで起動するLambda関数
+  # ------------------------------------
+  CsvToEc2Function:
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
       Handler: index.lambda_handler
       Runtime: python3.13
-      Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 60
-      Code:
-        ZipFile: |
-          import boto3
-          import csv
-          import os
-          import urllib.parse
+      InlineCode: |
+        import boto3
+        import csv
+        import os
+        import urllib.parse
+        s3 = boto3.client('s3')
+        ec2 = boto3.client('ec2')
+        def lambda_handler(event, context):
+            bucket = event['Records'][0]['s3']['bucket']['name']
+            key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
+            print(f"Processing file: s3://{bucket}/{key}")
+            try:
+                response = s3.get_object(Bucket=bucket, Key=key)
+                lines = response['Body'].read().decode('utf-8').splitlines()
+                reader = csv.DictReader(lines)
+                for row in reader:
+                    try:
+                        subnet_id = row.get('subnet_id')
+                        ami_id = row.get('ami_id')
+                        instance_type = row.get('instance_type')
+                        if not all([subnet_id, ami_id, instance_type]):
+                            print(f"Skipping row due to missing required fields: {row}")
+                            continue
+                        print(f"Creating EC2 instance with AMI: {ami_id}, Type: {instance_type} in Subnet: {subnet_id}")
+                        instance_response = ec2.run_instances(
+                            ImageId=ami_id,
+                            InstanceType=instance_type,
+                            SubnetId=subnet_id,
+                            MinCount=1,
+                            MaxCount=1,
+                            TagSpecifications=[{'ResourceType': 'instance','Tags': [{'Key': 'Name', 'Value': f'Created from {os.path.basename(key)}'},{'Key': 'SourceFile', 'Value': f's3://{bucket}/{key}'}]}]
+                        )
+                        instance_id = instance_response['Instances'][0]['InstanceId']
+                        print(f"Successfully created instance: {instance_id}")
+                    except Exception as e:
+                        print(f"Error processing row: {row}. Error: {str(e)}")
+            except Exception as e:
+                print(f"Error getting file from S3. Error: {str(e)}")
+                raise e
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*"
+        - Statement:
+          - Effect: Allow
+            Action:
+              - ec2:RunInstances
+            Resource:
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}::image/*"
+        - Statement:
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            Condition:
+              StringEquals:
+                ec2:CreateAction: "RunInstances"
 
-          s3 = boto3.client('s3')
-          ec2 = boto3.client('ec2')
-
-          def lambda_handler(event, context):
-              bucket = event['Records'][0]['s3']['bucket']['name']
-              key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
-              
-              print(f"Processing file: s3://{bucket}/{key}")
-
-              try:
-                  response = s3.get_object(Bucket=bucket, Key=key)
-                  lines = response['Body'].read().decode('utf-8').splitlines()
-                  reader = csv.DictReader(lines)
-
-                  for row in reader:
-                      try:
-                          subnet_id = row.get('subnet_id')
-                          ami_id = row.get('ami_id')
-                          instance_type = row.get('instance_type')
-
-                          if not all([subnet_id, ami_id, instance_type]):
-                              print(f"Skipping row due to missing required fields: {row}")
-                              continue
-                          
-                          print(f"Creating EC2 instance with AMI: {ami_id}, Type: {instance_type} in Subnet: {subnet_id}")
-
-                          instance_response = ec2.run_instances(
-                              ImageId=ami_id,
-                              InstanceType=instance_type,
-                              SubnetId=subnet_id,
-                              MinCount=1,
-                              MaxCount=1,
-                              TagSpecifications=[
-                                  {
-                                      'ResourceType': 'instance',
-                                      'Tags': [
-                                          {'Key': 'Name', 'Value': f'Created from {os.path.basename(key)}'},
-                                          {'Key': 'SourceFile', 'Value': f's3://{bucket}/{key}'}
-                                      ]
-                                  }
-                              ]
-                          )
-                          
-                          instance_id = instance_response['Instances'][0]['InstanceId']
-                          print(f"Successfully created instance: {instance_id}")
-
-                      except Exception as e:
-                          print(f"Error processing row: {row}. Error: {str(e)}")
-
-              except Exception as e:
-                  print(f"Error getting file from S3. Error: {str(e)}")
-                  raise e
-
+  # ------------------------------------
+  # 3. S3がLambdaを呼び出すための権限
+  # ------------------------------------
   S3InvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt LambdaFunction.Arn
+      FunctionName: !GetAtt CsvToEc2Function.Arn
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
       SourceArn: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}"
