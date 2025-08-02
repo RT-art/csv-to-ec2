@@ -102,6 +102,8 @@ Resources:
       PrivateDnsEnabled: true
   CsvBucket:
     Type: AWS::S3::Bucket
+    DependsOn:
+    - S3InvokePermission
     Properties:
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -116,6 +118,31 @@ Resources:
         ServerSideEncryptionConfiguration:
         - ServerSideEncryptionByDefault:
             SSEAlgorithm: AES256
+      NotificationConfiguration:
+        LambdaConfigurations:
+        - Event: s3:ObjectCreated:*
+          Function:
+            Fn::GetAtt:
+            - StartWorkflowFunction
+            - Arn
+          Filter:
+            S3Key:
+              Rules:
+              - Name: suffix
+                Value: .csv
+  S3InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Fn::GetAtt:
+        - StartWorkflowFunction
+        - Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+        - CsvBucket
+        - Arn
   DockerInstallSsmDocument:
     Type: AWS::SSM::Document
     Properties:
@@ -207,109 +234,25 @@ Resources:
   Ec2ProvisioningStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
+      Name:
+        Fn::Sub: Ec2ProvisioningStateMachine-${AWS::StackName}
       Type: STANDARD
-      Definition:
-        StartAt: Prepare CloudFormation Parameters
-        States:
-          Prepare CloudFormation Parameters:
-            Type: Pass
-            ResultPath: $.CfnParameters
-            Parameters:
-              StackName.$: $.Input.StackName
-              TemplateURL:
-                Fn::Sub: https://s3.${AWS::Region}.amazonaws.com/${CsvBucket}/ec2-template.yaml
-              RoleARN:
-                Fn::GetAtt:
-                - CfnServiceRole
-                - Arn
-              Capabilities:
-              - CAPABILITY_NAMED_IAM
-              Parameters:
-              - ParameterKey: VpcId
-                ParameterValue:
-                  Ref: VPC
-              - ParameterKey: SubnetId
-                ParameterValue:
-                  Ref: PrivateSubnet
-              - ParameterKey: InstanceType
-                ParameterValue.$: $.Input.InstanceType
-              - ParameterKey: AmiId
-                ParameterValue.$: $.Input.AmiId
-            Next: Stack Exists?
-          Stack Exists?:
-            Type: Choice
-            Choices:
-            - Variable: $.Input.Action
-              StringEquals: create
-              Next: Create Stack
-            Default: Update Stack
-          Create Stack:
-            Type: Task
-            Resource: arn:aws:states:::cloudformation:createStack.sync
-            Parameters:
-              StackName.$: $.CfnParameters.StackName
-              TemplateURL.$: $.CfnParameters.TemplateURL
-              RoleARN.$: $.CfnParameters.RoleARN
-              Capabilities.$: $.CfnParameters.Capabilities
-              Parameters.$: $.CfnParameters.Parameters
-            ResultPath: $.CreateStackResult
-            Next: Get Instance ID
-            Catch:
-            - ErrorEquals:
-              - States.ALL
-              Next: Provisioning Failed
-          Update Stack:
-            Type: Task
-            Resource: arn:aws:states:::cloudformation:updateStack.sync
-            Parameters:
-              StackName.$: $.CfnParameters.StackName
-              TemplateURL.$: $.CfnParameters.TemplateURL
-              RoleARN.$: $.CfnParameters.RoleARN
-              Capabilities.$: $.CfnParameters.Capabilities
-              Parameters.$: $.CfnParameters.Parameters
-            ResultPath: $.UpdateStackResult
-            Next: Get Instance ID
-            Catch:
-            - ErrorEquals:
-              - CloudFormation.AmazonCloudFormationException
-              Comment: Catch if no updates are to be performed
-              Next: No Updates To Perform
-            - ErrorEquals:
-              - States.ALL
-              Next: Provisioning Failed
-          No Updates To Perform:
-            Type: Succeed
-          Get Instance ID:
-            Type: Task
-            Resource: arn:aws:states:::lambda:invoke
-            Parameters:
-              FunctionName:
-                Fn::GetAtt:
-                - GetStackOutputFunction
-                - Arn
-              Payload:
-                StackName.$: $.Input.StackName
-            ResultSelector:
-              InstanceId.$: $.Payload.InstanceId
-            ResultPath: $.InstanceOutput
-            Next: Run SSM Command
-            Catch:
-            - ErrorEquals:
-              - States.ALL
-              Next: Provisioning Failed
-          Run SSM Command:
-            Type: Task
-            Resource: arn:aws:states:::aws-sdk:ssm:sendCommand
-            Parameters:
-              DocumentName:
-                Ref: DockerInstallSsmDocument
-              InstanceIds.$: States.Array($.InstanceOutput.InstanceId)
-            End: true
-          Provisioning Failed:
-            Type: Fail
-            Error: EC2ProvisioningFailed
-            Cause: The EC2 provisioning process failed. Check the execution history
-              for details.
+      DefinitionUri: ..\..\statemachine\workflow.asl.json
+      DefinitionSubstitutions:
+        CfnServiceRoleArn:
+          Fn::GetAtt:
+          - CfnServiceRole
+          - Arn
+        VpcId:
+          Ref: VPC
+        SubnetId:
+          Ref: PrivateSubnet
+        GetStackOutputFunctionArn:
+          Fn::GetAtt:
+          - GetStackOutputFunction
+          - Arn
+        SsmDocumentName:
+          Ref: DockerInstallSsmDocument
       Policies:
       - Statement:
         - Effect: Allow
@@ -323,9 +266,7 @@ Resources:
           Action: ssm:SendCommand
           Resource:
           - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
-          - Fn::GetAtt:
-            - DockerInstallSsmDocument
-            - Arn
+          - Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${DockerInstallSsmDocument}
         - Effect: Allow
           Action: lambda:InvokeFunction
           Resource:
@@ -338,8 +279,6 @@ Resources:
             Fn::GetAtt:
             - CfnServiceRole
             - Arn
-      Name:
-        Fn::Sub: Ec2ProvisioningStateMachine-${AWS::StackName}
   StartWorkflowFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -350,31 +289,32 @@ Resources:
         Variables:
           STATE_MACHINE_ARN:
             Ref: Ec2ProvisioningStateMachine
+          EC2_TEMPLATE_KEY: ec2-template.yaml
       Policies:
-      - S3ReadPolicy:
-          BucketName:
-            Ref: CsvBucket
       - Statement:
         - Effect: Allow
           Action: states:StartExecution
           Resource:
             Ref: Ec2ProvisioningStateMachine
-      Events:
-        CsvUpload:
-          Type: S3
-          Properties:
-            Bucket:
-              Ref: CsvBucket
-            Events: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                - Name: suffix
-                  Value: .csv
       FunctionName:
         Fn::Sub: StartWorkflowFunction-${AWS::StackName}
     Metadata:
       SamResourceId: StartWorkflowFunction
+  StartWorkflowS3ReadPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Sub: ${AWS::StackName}-StartWorkflowS3ReadPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          Resource:
+            Fn::Sub: ${CsvBucket.Arn}/*
+      Roles:
+      - Ref: StartWorkflowFunctionRole
 Outputs:
   StateMachineArn:
     Description: ARN of the EC2 Provisioning State Machine
