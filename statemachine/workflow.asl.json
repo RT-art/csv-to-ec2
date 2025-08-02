@@ -7,7 +7,7 @@
       "ResultPath": "$.CfnParameters",
       "Parameters": {
         "StackName.$": "$.Input.StackName",
-        "TemplateBody": "${Ec2TemplateBody}",
+        "TemplateURL.$": "$.Input.TemplateURL",
         "RoleARN": "${CfnServiceRoleArn}",
         "Capabilities": [
           "CAPABILITY_NAMED_IAM"
@@ -46,16 +46,16 @@
     },
     "Create Stack": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::cloudformation:createStack.sync",
+      "Resource": "arn:aws:states:::aws-sdk:cloudformation:createStack",
       "Parameters": {
         "StackName.$": "$.CfnParameters.StackName",
-        "TemplateBody.$": "$.CfnParameters.TemplateBody",
+        "TemplateURL.$": "$.CfnParameters.TemplateURL",
         "RoleARN.$": "$.CfnParameters.RoleARN",
         "Capabilities.$": "$.CfnParameters.Capabilities",
         "Parameters.$": "$.CfnParameters.Parameters"
       },
       "ResultPath": "$.CreateStackResult",
-      "Next": "Get Instance ID",
+      "Next": "Wait for Stack Create",
       "Catch": [
         {
           "ErrorEquals": [
@@ -67,16 +67,16 @@
     },
     "Update Stack": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::cloudformation:updateStack.sync",
+      "Resource": "arn:aws:states:::aws-sdk:cloudformation:updateStack",
       "Parameters": {
         "StackName.$": "$.CfnParameters.StackName",
-        "TemplateBody.$": "$.CfnParameters.TemplateBody",
+        "TemplateURL.$": "$.CfnParameters.TemplateURL",
         "RoleARN.$": "$.CfnParameters.RoleARN",
         "Capabilities.$": "$.CfnParameters.Capabilities",
         "Parameters.$": "$.CfnParameters.Parameters"
       },
       "ResultPath": "$.UpdateStackResult",
-      "Next": "Get Instance ID",
+      "Next": "Wait for Stack Update",
       "Catch": [
         {
           "ErrorEquals": [
@@ -92,6 +92,16 @@
           "Next": "Provisioning Failed"
         }
       ]
+    },
+    "Wait for Stack Create": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Get Instance ID"
+    },
+    "Wait for Stack Update": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Get Instance ID"
     },
     "No Updates To Perform": {
       "Type": "Succeed"
@@ -134,4 +144,4 @@
       "Cause": "The EC2 provisioning process failed. Check the execution history for details."
     }
   }
-} 
+}
