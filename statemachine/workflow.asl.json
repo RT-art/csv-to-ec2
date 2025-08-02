@@ -7,7 +7,7 @@
       "ResultPath": "$.CfnParameters",
       "Parameters": {
         "StackName.$": "$.Input.StackName",
-        "TemplateURL": "${Ec2TemplateUrl}",
+        "TemplateBody": "${Ec2TemplateBody}",
         "RoleARN": "${CfnServiceRoleArn}",
         "Capabilities": [
           "CAPABILITY_NAMED_IAM"
@@ -49,7 +49,7 @@
       "Resource": "arn:aws:states:::cloudformation:createStack.sync",
       "Parameters": {
         "StackName.$": "$.CfnParameters.StackName",
-        "TemplateURL.$": "$.CfnParameters.TemplateURL",
+        "TemplateBody.$": "$.CfnParameters.TemplateBody",
         "RoleARN.$": "$.CfnParameters.RoleARN",
         "Capabilities.$": "$.CfnParameters.Capabilities",
         "Parameters.$": "$.CfnParameters.Parameters"
@@ -58,7 +58,9 @@
       "Next": "Get Instance ID",
       "Catch": [
         {
-          "ErrorEquals": [ "States.ALL" ],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Next": "Provisioning Failed"
         }
       ]
@@ -68,7 +70,7 @@
       "Resource": "arn:aws:states:::cloudformation:updateStack.sync",
       "Parameters": {
         "StackName.$": "$.CfnParameters.StackName",
-        "TemplateURL.$": "$.CfnParameters.TemplateURL",
+        "TemplateBody.$": "$.CfnParameters.TemplateBody",
         "RoleARN.$": "$.CfnParameters.RoleARN",
         "Capabilities.$": "$.CfnParameters.Capabilities",
         "Parameters.$": "$.CfnParameters.Parameters"
@@ -77,12 +79,16 @@
       "Next": "Get Instance ID",
       "Catch": [
         {
-          "ErrorEquals": [ "CloudFormation.AmazonCloudFormationException" ],
+          "ErrorEquals": [
+            "CloudFormation.AmazonCloudFormationException"
+          ],
           "Comment": "Catch if no updates are to be performed",
           "Next": "No Updates To Perform"
         },
         {
-          "ErrorEquals": [ "States.ALL" ],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Next": "Provisioning Failed"
         }
       ]
@@ -106,7 +112,9 @@
       "Next": "Run SSM Command",
       "Catch": [
         {
-          "ErrorEquals": [ "States.ALL" ],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Next": "Provisioning Failed"
         }
       ]
@@ -126,4 +134,4 @@
       "Cause": "The EC2 provisioning process failed. Check the execution history for details."
     }
   }
-}
+} 

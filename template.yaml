@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Step Functions を使用して、S3にアップロードされたCSVに基づきEC2を非同期でプロビジョニングするオーケストレーション
+  An orchestration to asynchronously provision EC2 instances based on a CSV file uploaded to S3, using Step Functions.
 
 Globals:
   Function:
-    Runtime: python3.11
+    Runtime: python3.13
     MemorySize: 256
     Architectures:
       - x86_64
@@ -18,11 +18,11 @@ Parameters:
   RetentionDays:
     Type: Number
     Default: 30
-    Description: "S3バケットのオブジェクト保持期間(日数)"
+    Description: "Object retention period for the S3 bucket in days"
 
 Resources:
   # ------------------------------------------------------------
-  #  1. ネットワーク & S3 & SSMドキュメント (ここはほぼ変更なし)
+  #  1. Networking, S3, and SSM Document
   # ------------------------------------------------------------
   VPC:
     Type: AWS::EC2::VPC
@@ -54,19 +54,47 @@ Resources:
           CidrIp: !GetAtt VPC.CidrBlock
   SSMEndpoint:
     Type: AWS::EC2::VPCEndpoint
-    # (以下、Endpoint定義は変更ないので省略)
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
   SSMMessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
-    # (以下、Endpoint定義は変更ないので省略)
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
   EC2MessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
-    # (以下、Endpoint定義は変更ないので省略)
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
 
   CsvBucket:
     Type: AWS::S3::Bucket
     Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
       BucketName: !Sub "csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}"
-      # (以下、S3のプロパティは変更ないので省略)
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
 
   DockerInstallSsmDocument:
     Type: AWS::SSM::Document
@@ -74,19 +102,26 @@ Resources:
       Name: !Sub "DockerInstallScript-${AWS::StackName}"
       DocumentType: Command
       Content:
-        Fn::Transform:
-          Name: AWS::Include
-          Parameters:
-            Location: ./ssm-documents/install-docker.yaml
+        schemaVersion: "2.2"
+        description: "Install Docker and output completion message on Amazon Linux2023 (Idempotent)"
+        mainSteps:
+          - action: "aws:runShellScript"
+            name: "InstallDocker"
+            inputs:
+              runCommand:
+                - "set -e"
+                - "if ! command -v docker &> /dev/null; then sudo dnf install -y docker; fi"
+                - "sudo systemctl enable docker.service"
+                - "sudo systemctl start docker.service"
+                - "if ! id -nG 'ec2-user' | grep -qw 'docker'; then sudo usermod -a -G docker ec2-user; fi"
+                - "echo 'Docker setup complete.'"
 
   # ------------------------------------------------------------
-  #  2. CloudFormationがEC2を作成するためのIAMロール (変更なし)
+  #  2. CloudFormation IAM Role for EC2 Management
   # ------------------------------------------------------------
   CfnServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      # IAM RoleNameは自動生成に任せるのがベストプラクティス
-      # RoleName: !Sub "CfnServiceRole-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -95,17 +130,48 @@ Resources:
               Service: cloudformation.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        # (ポリシー内容は変更なし)
+        - PolicyName: EC2AndIAMManagementPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ec2:DescribeImages"
+                  - "ec2:DescribeVpcs"
+                  - "ec2:DescribeSubnets"
+                  - "ec2:DescribeSecurityGroups"
+                  - "ec2:DescribeInstances"
+                  - "ec2:RunInstances"
+                  - "ec2:TerminateInstances"
+                  - "ec2:CreateSecurityGroup"
+                  - "ec2:DeleteSecurityGroup"
+                Resource: "*"
+              - Effect: Allow
+                Action: "ec2:CreateTags"
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "ec2:CreateAction": ["RunInstances", "CreateSecurityGroup"]
+              - Effect: Allow
+                Action:
+                  - "iam:CreateRole"
+                  - "iam:DeleteRole"
+                  - "iam:CreateInstanceProfile"
+                  - "iam:DeleteInstanceProfile"
+                  - "iam:AddRoleToInstanceProfile"
+                  - "iam:RemoveRoleFromInstanceProfile"
+                  - "iam:AttachRolePolicy"
+                  - "iam:PassRole"
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/EC2Role-for-ec2-*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:instance-profile/EC2Profile-for-ec2-*"
 
   # ------------------------------------------------------------
-  #  3. Step Functions と、それが使うLambda関数・IAMロール
+  #  3. Step Functions and related resources
   # ------------------------------------------------------------
-
-  # Step Functions から呼び出されるLambda (インスタンスID取得用)
   GetStackOutputFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "GetStackOutputFunction-${AWS::StackName}"
       CodeUri: src/get_stack_output/
       Handler: app.lambda_handler
       Timeout: 10
@@ -115,48 +181,122 @@ Resources:
               Action:
                 - cloudformation:DescribeStacks
               Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ec2-*/*"
+      FunctionName: !Sub "GetStackOutputFunction-${AWS::StackName}"
 
-  # Step Functions の本体
   Ec2ProvisioningStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
-      Name: !Sub "Ec2ProvisioningStateMachine-${AWS::StackName}"
       Type: STANDARD
-      DefinitionUri: statemachine/workflow.asl.json
-      DefinitionSubstitutions:
-        CfnServiceRoleArn: !GetAtt CfnServiceRole.Arn
-        Ec2TemplateUrl: !Sub "https://s3.${AWS::Region}.amazonaws.com/${CsvBucket}/ec2-template.yaml"
-        GetStackOutputFunctionArn: !GetAtt GetStackOutputFunction.Arn
-        SsmDocumentName: !Ref DockerInstallSsmDocument
-        VpcId: !Ref VPC
-        SubnetId: !Ref PrivateSubnet
+      Definition:
+        StartAt: "Prepare CloudFormation Parameters"
+        States:
+          "Prepare CloudFormation Parameters":
+            Type: "Pass"
+            ResultPath: "$.CfnParameters"
+            Parameters:
+              "StackName.$": "$.Input.StackName"
+              "TemplateURL": !Sub "https://s3.${AWS::Region}.amazonaws.com/${CsvBucket}/ec2-template.yaml"
+              "RoleARN": !GetAtt CfnServiceRole.Arn
+              "Capabilities":
+                - "CAPABILITY_NAMED_IAM"
+              "Parameters":
+                - "ParameterKey": "VpcId"
+                  "ParameterValue": !Ref VPC
+                - "ParameterKey": "SubnetId"
+                  "ParameterValue": !Ref PrivateSubnet
+                - "ParameterKey": "InstanceType"
+                  "ParameterValue.$": "$.Input.InstanceType"
+                - "ParameterKey": "AmiId"
+                  "ParameterValue.$": "$.Input.AmiId"
+            Next: "Stack Exists?"
+          "Stack Exists?":
+            Type: "Choice"
+            Choices:
+              - Variable: "$.Input.Action"
+                StringEquals: "create"
+                Next: "Create Stack"
+            Default: "Update Stack"
+          "Create Stack":
+            Type: "Task"
+            Resource: "arn:aws:states:::cloudformation:createStack.sync"
+            Parameters:
+              "StackName.$": "$.CfnParameters.StackName"
+              "TemplateURL.$": "$.CfnParameters.TemplateURL"
+              "RoleARN.$": "$.CfnParameters.RoleARN"
+              "Capabilities.$": "$.CfnParameters.Capabilities"
+              "Parameters.$": "$.CfnParameters.Parameters"
+            ResultPath: "$.CreateStackResult"
+            Next: "Get Instance ID"
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                Next: "Provisioning Failed"
+          "Update Stack":
+            Type: "Task"
+            Resource: "arn:aws:states:::cloudformation:updateStack.sync"
+            Parameters:
+              "StackName.$": "$.CfnParameters.StackName"
+              "TemplateURL.$": "$.CfnParameters.TemplateURL"
+              "RoleARN.$": "$.CfnParameters.RoleARN"
+              "Capabilities.$": "$.CfnParameters.Capabilities"
+              "Parameters.$": "$.CfnParameters.Parameters"
+            ResultPath: "$.UpdateStackResult"
+            Next: "Get Instance ID"
+            Catch:
+              - ErrorEquals: ["CloudFormation.AmazonCloudFormationException"]
+                Comment: "Catch if no updates are to be performed"
+                Next: "No Updates To Perform"
+              - ErrorEquals: ["States.ALL"]
+                Next: "Provisioning Failed"
+          "No Updates To Perform":
+            Type: "Succeed"
+          "Get Instance ID":
+            Type: "Task"
+            Resource: "arn:aws:states:::lambda:invoke"
+            Parameters:
+              "FunctionName": !GetAtt GetStackOutputFunction.Arn
+              "Payload":
+                "StackName.$": "$.Input.StackName"
+            ResultSelector:
+              "InstanceId.$": "$.Payload.InstanceId"
+            ResultPath: "$.InstanceOutput"
+            Next: "Run SSM Command"
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                Next: "Provisioning Failed"
+          "Run SSM Command":
+            Type: "Task"
+            Resource: "arn:aws:states:::aws-sdk:ssm:sendCommand"
+            Parameters:
+              "DocumentName": !Ref DockerInstallSsmDocument
+              "InstanceIds.$": "States.Array($.InstanceOutput.InstanceId)"
+            End: true
+          "Provisioning Failed":
+            Type: "Fail"
+            Error: "EC2ProvisioningFailed"
+            Cause: "The EC2 provisioning process failed. Check the execution history for details."
       Policies:
         - Statement:
             - Effect: Allow
               Action:
-                - "cloudformation:CreateStack"
-                - "cloudformation:UpdateStack"
-                - "cloudformation:DescribeStacks"
+                - cloudformation:CreateStack
+                - cloudformation:UpdateStack
+                - cloudformation:DescribeStacks
               Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ec2-*/*"
             - Effect: Allow
-              Action:
-                - "ssm:SendCommand"
+              Action: ssm:SendCommand
               Resource:
                 - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${DockerInstallSsmDocument}"
+                - !GetAtt DockerInstallSsmDocument.Arn
             - Effect: Allow
-              Action:
-                - "lambda:InvokeFunction"
+              Action: lambda:InvokeFunction
               Resource: !GetAtt GetStackOutputFunction.Arn
-            - Effect: Allow # CloudFormationにIAMロールを渡すために必要
-              Action: "iam:PassRole"
+            - Effect: Allow
+              Action: iam:PassRole
               Resource: !GetAtt CfnServiceRole.Arn
-
-  # S3トリガーでStep Functionsを起動するLambda
+      Name: !Sub "Ec2ProvisioningStateMachine-${AWS::StackName}"
   StartWorkflowFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "StartWorkflowFunction-${AWS::StackName}"
       CodeUri: src/start_workflow/
       Handler: app.lambda_handler
       Timeout: 60
@@ -181,11 +321,12 @@ Resources:
                 Rules:
                   - Name: suffix
                     Value: .csv
+      FunctionName: !Sub "StartWorkflowFunction-${AWS::StackName}"
 
 Outputs:
   StateMachineArn:
     Description: "ARN of the EC2 Provisioning State Machine"
     Value: !Ref Ec2ProvisioningStateMachine
   CsvBucketName:
-    Description: "CSVファイルをアップロードするS3バケット名"
+    Description: "CSV bucket name for uploading files"
     Value: !Ref CsvBucket
