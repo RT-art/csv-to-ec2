@@ -140,9 +140,7 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
       SourceArn:
-        Fn::GetAtt:
-        - CsvBucket
-        - Arn
+        Fn::Sub: arn:aws:s3:::csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}
   DockerInstallSsmDocument:
     Type: AWS::SSM::Document
     Properties:
