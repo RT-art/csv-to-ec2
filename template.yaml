@@ -113,7 +113,7 @@ Resources:
       FunctionName: !GetAtt StartWorkflowFunction.Arn
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
-      SourceArn: !GetAtt CsvBucket.Arn
+      SourceArn: !Sub "arn:aws:s3:::csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}"
 
   DockerInstallSsmDocument:
     Type: AWS::SSM::Document

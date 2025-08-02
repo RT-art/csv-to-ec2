@@ -1,2 +1,2 @@
 StackName,Action,InstanceType,AmiId,
-ec2-web-01,create,t2.micro,ami-0123456789abcdef0,
+ec2-web-01,create,t2.micro,ami-095af7cb7ddb447ef,
