@@ -7,7 +7,7 @@
       "ResultPath": "$.CfnParameters",
       "Parameters": {
         "StackName.$": "$.Input.StackName",
-        "TemplateURL.$": "$.Input.TemplateURL",
+        "TemplateURL.$": "$.TemplateURL",
         "RoleARN": "${CfnServiceRoleArn}",
         "Capabilities": [
           "CAPABILITY_NAMED_IAM"

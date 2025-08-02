@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: A simple and refined template to create a VPC and one Private Subnet.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Description: CIDR block for the VPC.
+    Default: 10.0.0.0/16
+  
+  PrivateSubnetCidr:
+    Type: String
+    Description: CIDR block for the Private Subnet.
+    Default: 10.0.1.0/24
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPC"
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetCidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-PrivateSubnet"
+
+Outputs:
+  VpcId:
+    Description: The ID of the created VPC.
+    Value: !Ref VPC
+  
+  PrivateSubnetId:
+    Description: The ID of the created Private Subnet.
+    Value: !Ref PrivateSubnet
