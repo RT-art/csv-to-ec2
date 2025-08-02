@@ -175,6 +175,14 @@ Resources:
             Service: cloudformation.amazonaws.com
           Action: sts:AssumeRole
       Policies:
+      - PolicyName: S3ReadAccessForCfn
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource:
+              Fn::Sub: ${CsvBucket.Arn}/*
       - PolicyName: EC2AndIAMManagementPolicy
         PolicyDocument:
           Version: '2012-10-17'

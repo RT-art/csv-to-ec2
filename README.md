@@ -1,81 +1,56 @@
-CSV-to-EC2 Orchestrator
-S3にCSVファイルをアップロードするだけで、EC2インスタンスのプロビジョニングからセットアップまでを自動実行する、サーバーレスなオーケストレーションシステムです。
+CSV to EC2 Creator
+S3にアップロードされたCSVファイルの内容に基づき、EC2インスタンスを自動的にプロビジョニングするプロジェクトです。
 
-<p align="center">
-<img src="images/architecture_stepfunctions.png" alt="architecture" width="90%">
-<br>
-<em>(新しいアーキテクチャ図をここに配置)</em>
-</p>
+概要
+このプロジェクトは、AWSのサーバーレスアーキテクチャを活用し、手動でのインスタンス作成作業を自動化します。指定されたフォーマットのCSVファイルをS3バケットにアップロードするだけで、S3イベント通知がLambda関数をトリガーし、CSVに定義されたパラメータ（インスタンスタイプ、AMIなど）を持つEC2インスタンスが自動で構築されます。
 
-✨ 概要
-このプロジェクトは、CSVファイルに定義された情報に基づき、EC2インスタンスを自動で構築・設定します。AWS Step Functions を中心に、モダンなクラウドネイティブのベストプラクティスをふんだんに取り入れた、堅牢でスケーラブルな設計が特徴です。
+インフラの定義にはAWS SAM (Serverless Application Model) を使用しており、IaC (Infrastructure as Code) によって管理されています。
 
-主な特徴
-サーバーレス & イベント駆動: S3へのアップロードをトリガーに、すべてのプロセスが自動的に開始されます。
+アーキテクチャ
+全体像は以下の通りです。
 
-オーケストレーション: AWS Step Functions を利用し、CloudFormationの実行、完了待機、後続処理（SSMコマンド実行）といった一連のワークフローを確実かつ視覚的に管理します。
+CSV Upload: ユーザーがローカル環境から設定を記述したCSVファイルをS3バケットにアップロードします。
 
-IaC (Infrastructure as Code): AWS SAM を用いて、ネットワーク、IAMロール、Lambda関数、Step Functionsステートマシンなど、すべてのリソースをコードで宣言的に管理します。
+S3 Event Notification: S3バケットはオブジェクト作成イベントを検知し、Lambda関数を非同期で呼び出します。
 
-堅牢性と信頼性: Step Functionsによるリトライ・エラーハンドリング、べき等性を担保した設定スクリプトにより、信頼性の高い処理を実現します。
+Lambda Execution: Lambda関数がトリガーされ、アップロードされたCSVファイルを取得・解析します。
 
-疎結合な設計: 各コンポーネントが単一の責務を持ち、疎に結合しているため、保守性と拡張性に優れています。
+EC2 Provisioning: Lambda関数はboto3ライブラリを使用し、CSVの各行で定義されたパラメータに基づいてEC2インスタンスを作成します。
 
-⚙️ アーキテクチャ
-ユーザーがCSVファイルをS3バケットにアップロードします。
-
-S3イベントがLambda関数（StartWorkflowFunction）をトリガーします。
-
-LambdaはCSVの各行の情報をペイロードとして、Step Functionsのワークフローを開始します。
-
-Step Functionsは以下のワークフローを順次実行します。
-a.  CloudFormationスタックを作成・更新し、完了まで待機します。
-b.  別のLambda関数（GetStackOutputFunction）を呼び出し、作成されたEC2のインスタンスIDを取得します。
-c.  取得したインスタンスIDに対し、SSM Run CommandでDockerのインストールなど初期設定を実行します。
-
-エラーが発生した場合は、ワークフローが自動的に失敗状態となり、AWSコンソールから原因を簡単に特定できます。
-
-🛠️ セットアップとデプロイ
-要件
-AWS CLI
+使用方法
+前提条件
+AWSアカウント
 
 AWS SAM CLI
 
-Python 3.11
+デプロイ
+リポジトリをクローンします。
 
-Docker (SAMのローカルテスト用)
-
-デプロイ手順
 Bash
 
-# 1. リポジトリをクローン
-git clone https://github.com/YOUR_USERNAME/csv-to-ec2.git
+git clone <repository-url>
 cd csv-to-ec2
+SAMアプリケーションをビルドします。
 
-# 2. ネストスタック用のテンプレートをS3にアップロード
-# (事前にS3バケットを作成しておく必要があります)
-aws s3 cp ec2-template.yaml s3://<YOUR-BUCKET-NAME>/ec2-template.yaml
+Bash
 
-# 3. アプリケーションをビルド
 sam build
+ガイドに従ってデプロイを実行します。
 
-# 4. ガイドに従ってデプロイ
+Bash
+
 sam deploy --guided
-使い方
-CSVファイルの作成:
-StackName, Action, InstanceType, AmiId などのヘッダーを持つCSVファイルを作成します。
-
-sample.csv
+CSVファイルのフォーマット
+S3にアップロードするCSVファイルは、以下のヘッダーを持つ必要があります。
 
 コード スニペット
 
-StackName,Action,InstanceType,AmiId
-ec2-web-01,create,t2.micro,ami-0c55b159cbfafe1f0
-ec2-db-01,create,t3.small,ami-0c55b159cbfafe1f0
-S3へアップロード:
-デプロイ時に作成されたS3バケットに、作成したCSVファイルをアップロードします。
+subnet_id,ami_id,instance_type
+subnet-xxxxxxxx,ami-zzzzzzzz,t2.micro
+subnet-yyyyyyyy,ami-aaaaaaaa,t3.small
+クリーンアップ
+デプロイしたリソースを削除するには、以下のコマンドを実行します。
 
 Bash
 
-aws s3 cp sample.csv s3://<YOUR-DEPLOYED-BUCKET-NAME>/
-アップロード後、自動的にStep Functionsのワークフローが実行されます。実行状況はAWSマネジメントコンソールのStep Functionsのページから視覚的に確認できます。
+sam delete
