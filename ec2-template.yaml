@@ -1,22 +1,18 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   (Nested Stack) Creates an EC2 instance with an IAM role for SSM access.
-  Launched by the CsvToEc2 Lambda function.
 
 Parameters:
   InstanceType:
     Type: String
     Default: t2.micro
     Description: EC2 instance type.
-
   AmiId:
     Type: AWS::EC2::Image::Id
-    Description: The AMI ID for the EC2 instance (provided by Lambda).
-    
+    Description: The AMI ID for the EC2 instance.
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: VPC ID to launch the instance in.
-  
   SubnetId:
     Type: AWS::EC2::Subnet::Id
     Description: Subnet ID to launch the instance in.
@@ -25,7 +21,6 @@ Resources:
   EC2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "EC2Role-for-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -39,7 +34,6 @@ Resources:
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: !Sub "EC2Profile-for-${AWS::StackName}"
       Roles:
         - !Ref EC2InstanceRole
 
@@ -60,9 +54,9 @@ Resources:
       SubnetId: !Ref SubnetId
       SecurityGroupIds:
         - !Ref MySecurityGroup
-      IamInstanceProfile: !Ref EC2InstanceProfile
+      IamInstanceProfile: !GetAtt EC2InstanceProfile.Arn
       Tags:
-        - Key: Name # This tag is often overwritten by SSM Hostname change
+        - Key: Name
           Value: !Sub "ec2-${AWS::StackName}"
 
 Outputs:

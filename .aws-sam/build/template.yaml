@@ -1,0 +1,386 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'An orchestration to asynchronously provision EC2 instances based on
+  a CSV file uploaded to S3, using Step Functions.
+
+  '
+Globals:
+  Function:
+    Runtime: python3.13
+    MemorySize: 256
+    Architectures:
+    - x86_64
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+    - dev
+    - staging
+    - prod
+    Default: dev
+  RetentionDays:
+    Type: Number
+    Default: 30
+    Description: Object retention period for the S3 bucket in days
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: vpc-${AWS::StackName}
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone:
+        Fn::Select:
+        - 0
+        - Fn::GetAZs: ''
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: subnet-${AWS::StackName}
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC Endpoints
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp:
+          Fn::GetAtt:
+          - VPC
+          - CidrBlock
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+      - Ref: PrivateSubnet
+      SecurityGroupIds:
+      - Ref: VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+      - Ref: PrivateSubnet
+      SecurityGroupIds:
+      - Ref: VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+      - Ref: PrivateSubnet
+      SecurityGroupIds:
+      - Ref: VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+  CsvBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketName:
+        Fn::Sub: csv-to-ec2-data-${AWS::AccountId}-${AWS::Region}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+  DockerInstallSsmDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name:
+        Fn::Sub: DockerInstallScript-${AWS::StackName}
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Install Docker and output completion message on Amazon Linux2023
+          (Idempotent)
+        mainSteps:
+        - action: aws:runShellScript
+          name: InstallDocker
+          inputs:
+            runCommand:
+            - set -e
+            - if ! command -v docker &> /dev/null; then sudo dnf install -y docker;
+              fi
+            - sudo systemctl enable docker.service
+            - sudo systemctl start docker.service
+            - if ! id -nG 'ec2-user' | grep -qw 'docker'; then sudo usermod -a -G
+              docker ec2-user; fi
+            - echo 'Docker setup complete.'
+  CfnServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: cloudformation.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: EC2AndIAMManagementPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - ec2:DescribeImages
+            - ec2:DescribeVpcs
+            - ec2:DescribeSubnets
+            - ec2:DescribeSecurityGroups
+            - ec2:DescribeInstances
+            - ec2:RunInstances
+            - ec2:TerminateInstances
+            - ec2:CreateSecurityGroup
+            - ec2:DeleteSecurityGroup
+            Resource: '*'
+          - Effect: Allow
+            Action: ec2:CreateTags
+            Resource: '*'
+            Condition:
+              StringEquals:
+                ec2:CreateAction:
+                - RunInstances
+                - CreateSecurityGroup
+          - Effect: Allow
+            Action:
+            - iam:CreateRole
+            - iam:DeleteRole
+            - iam:CreateInstanceProfile
+            - iam:DeleteInstanceProfile
+            - iam:AddRoleToInstanceProfile
+            - iam:RemoveRoleFromInstanceProfile
+            - iam:AttachRolePolicy
+            - iam:PassRole
+            Resource:
+            - Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/EC2Role-for-ec2-*
+            - Fn::Sub: arn:aws:iam::${AWS::AccountId}:instance-profile/EC2Profile-for-ec2-*
+  GetStackOutputFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: GetStackOutputFunction
+      Handler: app.lambda_handler
+      Timeout: 10
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - cloudformation:DescribeStacks
+          Resource:
+            Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ec2-*/*
+      FunctionName:
+        Fn::Sub: GetStackOutputFunction-${AWS::StackName}
+    Metadata:
+      SamResourceId: GetStackOutputFunction
+  Ec2ProvisioningStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Definition:
+        StartAt: Prepare CloudFormation Parameters
+        States:
+          Prepare CloudFormation Parameters:
+            Type: Pass
+            ResultPath: $.CfnParameters
+            Parameters:
+              StackName.$: $.Input.StackName
+              TemplateURL:
+                Fn::Sub: https://s3.${AWS::Region}.amazonaws.com/${CsvBucket}/ec2-template.yaml
+              RoleARN:
+                Fn::GetAtt:
+                - CfnServiceRole
+                - Arn
+              Capabilities:
+              - CAPABILITY_NAMED_IAM
+              Parameters:
+              - ParameterKey: VpcId
+                ParameterValue:
+                  Ref: VPC
+              - ParameterKey: SubnetId
+                ParameterValue:
+                  Ref: PrivateSubnet
+              - ParameterKey: InstanceType
+                ParameterValue.$: $.Input.InstanceType
+              - ParameterKey: AmiId
+                ParameterValue.$: $.Input.AmiId
+            Next: Stack Exists?
+          Stack Exists?:
+            Type: Choice
+            Choices:
+            - Variable: $.Input.Action
+              StringEquals: create
+              Next: Create Stack
+            Default: Update Stack
+          Create Stack:
+            Type: Task
+            Resource: arn:aws:states:::cloudformation:createStack.sync
+            Parameters:
+              StackName.$: $.CfnParameters.StackName
+              TemplateURL.$: $.CfnParameters.TemplateURL
+              RoleARN.$: $.CfnParameters.RoleARN
+              Capabilities.$: $.CfnParameters.Capabilities
+              Parameters.$: $.CfnParameters.Parameters
+            ResultPath: $.CreateStackResult
+            Next: Get Instance ID
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              Next: Provisioning Failed
+          Update Stack:
+            Type: Task
+            Resource: arn:aws:states:::cloudformation:updateStack.sync
+            Parameters:
+              StackName.$: $.CfnParameters.StackName
+              TemplateURL.$: $.CfnParameters.TemplateURL
+              RoleARN.$: $.CfnParameters.RoleARN
+              Capabilities.$: $.CfnParameters.Capabilities
+              Parameters.$: $.CfnParameters.Parameters
+            ResultPath: $.UpdateStackResult
+            Next: Get Instance ID
+            Catch:
+            - ErrorEquals:
+              - CloudFormation.AmazonCloudFormationException
+              Comment: Catch if no updates are to be performed
+              Next: No Updates To Perform
+            - ErrorEquals:
+              - States.ALL
+              Next: Provisioning Failed
+          No Updates To Perform:
+            Type: Succeed
+          Get Instance ID:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - GetStackOutputFunction
+                - Arn
+              Payload:
+                StackName.$: $.Input.StackName
+            ResultSelector:
+              InstanceId.$: $.Payload.InstanceId
+            ResultPath: $.InstanceOutput
+            Next: Run SSM Command
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              Next: Provisioning Failed
+          Run SSM Command:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ssm:sendCommand
+            Parameters:
+              DocumentName:
+                Ref: DockerInstallSsmDocument
+              InstanceIds.$: States.Array($.InstanceOutput.InstanceId)
+            End: true
+          Provisioning Failed:
+            Type: Fail
+            Error: EC2ProvisioningFailed
+            Cause: The EC2 provisioning process failed. Check the execution history
+              for details.
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - cloudformation:CreateStack
+          - cloudformation:UpdateStack
+          - cloudformation:DescribeStacks
+          Resource:
+            Fn::Sub: arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/ec2-*/*
+        - Effect: Allow
+          Action: ssm:SendCommand
+          Resource:
+          - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+          - Fn::GetAtt:
+            - DockerInstallSsmDocument
+            - Arn
+        - Effect: Allow
+          Action: lambda:InvokeFunction
+          Resource:
+            Fn::GetAtt:
+            - GetStackOutputFunction
+            - Arn
+        - Effect: Allow
+          Action: iam:PassRole
+          Resource:
+            Fn::GetAtt:
+            - CfnServiceRole
+            - Arn
+      Name:
+        Fn::Sub: Ec2ProvisioningStateMachine-${AWS::StackName}
+  StartWorkflowFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: StartWorkflowFunction
+      Handler: app.lambda_handler
+      Timeout: 60
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN:
+            Ref: Ec2ProvisioningStateMachine
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: CsvBucket
+      - Statement:
+        - Effect: Allow
+          Action: states:StartExecution
+          Resource:
+            Ref: Ec2ProvisioningStateMachine
+      Events:
+        CsvUpload:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: CsvBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .csv
+      FunctionName:
+        Fn::Sub: StartWorkflowFunction-${AWS::StackName}
+    Metadata:
+      SamResourceId: StartWorkflowFunction
+Outputs:
+  StateMachineArn:
+    Description: ARN of the EC2 Provisioning State Machine
+    Value:
+      Ref: Ec2ProvisioningStateMachine
+  CsvBucketName:
+    Description: CSV bucket name for uploading files
+    Value:
+      Ref: CsvBucket
