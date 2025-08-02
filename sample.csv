@@ -1,2 +1,2 @@
 subnet_id,ami_id,instance_type
-subnet-07821b512bc4dbcfd,ami-095af7cb7ddb447ef,t2.micro
+subnet-xxxxxxx,ami-xxxxxxx,t2.micro
