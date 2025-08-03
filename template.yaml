@@ -1,4 +1,3 @@
-# template.yaml
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: A simple and refined stack to create an EC2 instance from a CSV file in S3 using Lambda.
@@ -6,28 +5,31 @@ Description: A simple and refined stack to create an EC2 instance from a CSV fil
 Resources:
   S3Bucket:
     Type: AWS::S3::Bucket
-
-  CsvToEc2Function:
-    Type: AWS::Serverless::Function
+    DependsOn: S3InvokePermission
     Properties:
-      FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
-      Handler: app.lambda_handler 
-      Runtime: python3.13
-      Timeout: 60
-      CodeUri: src/
-      Events:
-        S3CsvUpload:
-          Type: S3
-          Properties:
-            Bucket: !Ref S3Bucket
-            Events: s3:ObjectCreated:*
+      BucketName: !Sub "csv-ec2-creator-${AWS::AccountId}-${AWS::Region}"
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt CsvToEc2Function.Arn
             Filter:
               S3Key:
                 Rules:
                   - Name: suffix
                     Value: .csv
+  CsvToEc2Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Timeout: 60
+      CodeUri: src/
       Policies:
         - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*"
             - Effect: Allow
               Action: ec2:RunInstances
               Resource:
@@ -43,8 +45,15 @@ Resources:
               Condition:
                 StringEquals:
                   ec2:CreateAction: "RunInstances"
+  S3InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CsvToEc2Function.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}"
 
 Outputs:
   S3BucketName:
-    Description: "Bucket to upload CSV files. This name is auto-generated."
+    Description: "Bucket to upload CSV files."
     Value: !Ref S3Bucket
