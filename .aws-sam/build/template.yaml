@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: A simple stack to create an EC2 instance from a CSV file in S3 using
-  Lambda.
+Description: A simple and refined stack to create an EC2 instance from a CSV file
+  in S3 using Lambda.
 Resources:
   S3Bucket:
     Type: AWS::S3::Bucket
@@ -26,45 +26,19 @@ Resources:
     Properties:
       FunctionName:
         Fn::Sub: ${AWS::StackName}-CsvToEc2Function
-      Handler: index.lambda_handler
+      Handler: app.lambda_handler
       Runtime: python3.13
       Timeout: 60
-      InlineCode: "import boto3\nimport csv\nimport os\nimport urllib.parse\ns3 =\
-        \ boto3.client('s3')\nec2 = boto3.client('ec2')\ndef lambda_handler(event,\
-        \ context):\n    bucket = event['Records'][0]['s3']['bucket']['name']\n  \
-        \  key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'],\
-        \ encoding='utf-8')\n    print(f\"Processing file: s3://{bucket}/{key}\")\n\
-        \    try:\n        response = s3.get_object(Bucket=bucket, Key=key)\n    \
-        \    lines = response['Body'].read().decode('utf-8').splitlines()\n      \
-        \  reader = csv.DictReader(lines)\n        for row in reader:\n          \
-        \  try:\n                subnet_id = row.get('subnet_id')\n              \
-        \  ami_id = row.get('ami_id')\n                instance_type = row.get('instance_type')\n\
-        \                if not all([subnet_id, ami_id, instance_type]):\n       \
-        \             print(f\"Skipping row due to missing required fields: {row}\"\
-        )\n                    continue\n                print(f\"Creating EC2 instance\
-        \ with AMI: {ami_id}, Type: {instance_type} in Subnet: {subnet_id}\")\n  \
-        \              instance_response = ec2.run_instances(\n                  \
-        \  ImageId=ami_id,\n                    InstanceType=instance_type,\n    \
-        \                SubnetId=subnet_id,\n                    MinCount=1,\n  \
-        \                  MaxCount=1,\n                    TagSpecifications=[{'ResourceType':\
-        \ 'instance','Tags': [{'Key': 'Name', 'Value': f'Created from {os.path.basename(key)}'},{'Key':\
-        \ 'SourceFile', 'Value': f's3://{bucket}/{key}'}]}]\n                )\n \
-        \               instance_id = instance_response['Instances'][0]['InstanceId']\n\
-        \                print(f\"Successfully created instance: {instance_id}\")\n\
-        \            except Exception as e:\n                print(f\"Error processing\
-        \ row: {row}. Error: {str(e)}\")\n    except Exception as e:\n        print(f\"\
-        Error getting file from S3. Error: {str(e)}\")\n        raise e\n"
+      CodeUri: CsvToEc2Function
       Policies:
-      - Statement:
+      - Version: '2012-10-17'
+        Statement:
         - Effect: Allow
-          Action:
-          - s3:GetObject
+          Action: s3:GetObject
           Resource:
             Fn::Sub: arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*
-      - Statement:
         - Effect: Allow
-          Action:
-          - ec2:RunInstances
+          Action: ec2:RunInstances
           Resource:
           - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
           - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
@@ -72,15 +46,15 @@ Resources:
           - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
           - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
           - Fn::Sub: arn:aws:ec2:${AWS::Region}::image/*
-      - Statement:
         - Effect: Allow
-          Action:
-          - ec2:CreateTags
+          Action: ec2:CreateTags
           Resource:
             Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
           Condition:
             StringEquals:
               ec2:CreateAction: RunInstances
+    Metadata:
+      SamResourceId: CsvToEc2Function
   S3InvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -94,6 +68,6 @@ Resources:
         Fn::Sub: arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}
 Outputs:
   S3BucketName:
-    Description: The name of the S3 bucket where you should upload your CSV files.
+    Description: Bucket to upload CSV files.
     Value:
       Ref: S3Bucket

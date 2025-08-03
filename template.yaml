@@ -1,10 +1,8 @@
-# template.yaml (最終修正版)
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: A simple and refined stack to create an EC2 instance from a CSV file in S3 using Lambda.
 
 Resources:
-  # 1. S3バケット
   S3Bucket:
     Type: AWS::S3::Bucket
     DependsOn: S3InvokePermission
@@ -19,7 +17,6 @@ Resources:
                 Rules:
                   - Name: suffix
                     Value: .csv
-  # 2. Lambda関数
   CsvToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
@@ -29,7 +26,8 @@ Resources:
       Timeout: 60
       CodeUri: src/
       Policies:
-        - Statement:
+        - Version: "2012-10-17"
+          Statement:
             - Effect: Allow
               Action: s3:GetObject
               Resource: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*"
@@ -41,14 +39,13 @@ Resources:
                 - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
                 - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
                 - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
-                - "arn:aws:ec2:${AWS::Region}::image/*"
+                - !Sub "arn:aws:ec2:${AWS::Region}::image/*"
             - Effect: Allow
               Action: ec2:CreateTags
               Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
               Condition:
                 StringEquals:
                   ec2:CreateAction: "RunInstances"
-  # 3. Lambda呼び出し権限
   S3InvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
