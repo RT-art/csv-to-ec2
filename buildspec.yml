@@ -3,7 +3,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      python: 3.11
+      python: 3.13
     commands:
       - echo "Installing SAM CLI..."
       - pip install aws-sam-cli
@@ -16,4 +16,4 @@ phases:
   post_build:
     commands:
       - echo "Deploying the application..."
-      - sam deploy --no-confirm-changeset --capabilities CAPABILITY_IAM
+      - sam deploy --no-confirm-changeset --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset
