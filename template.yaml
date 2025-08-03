@@ -1,8 +1,10 @@
+# template.yaml (最終修正版)
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: A simple and refined stack to create an EC2 instance from a CSV file in S3 using Lambda.
 
 Resources:
+  # 1. S3バケット
   S3Bucket:
     Type: AWS::S3::Bucket
     DependsOn: S3InvokePermission
@@ -17,6 +19,7 @@ Resources:
                 Rules:
                   - Name: suffix
                     Value: .csv
+  # 2. Lambda関数
   CsvToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
@@ -45,6 +48,7 @@ Resources:
               Condition:
                 StringEquals:
                   ec2:CreateAction: "RunInstances"
+  # 3. Lambda呼び出し権限
   S3InvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
