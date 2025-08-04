@@ -120,4 +120,4 @@ buildspec.yaml: AWS CodeBuildでアプリケーションのビルドとデプロ
 
 pipeline.yaml: AWS CodePipelineによるCI/CDパイプラインを定義するCloudFormationテンプレートです。
 
-awsnetwork.yaml: (オプション) VPCやサブネットなどのネットワークインフラを定義します。
+awsnetwork.yaml: (オプション) VPCやサブネットなどのネットワークインフラを定義します。 
