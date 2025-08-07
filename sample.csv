@@ -1,3 +1,4 @@
-ami_id,instance_type
-ami-0c55b159cbfafe1f0,t2.micro
-ami-0c55b159cbfafe1f0,t3.small
+ami_id,instance_type,enable_ssm
+ami-0c55b159cbfafe1f0,t2.micro,ON
+ami-0c55b159cbfafe1f0,t3.small,OFF
+ami-0c55b159cbfafe1f0,t2.nano,
