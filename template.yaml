@@ -1,14 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >-
-  S3にアップロードされたCSVファイルからEC2インスタンスを自動作成するスタック。
-  VPC、サブネット、S3バケット、Lambda関数、およびEC2インスタンス用のIAMロールを作成します。
-  作成されるEC2インスタンスは、デフォルトでSSM（Systems Manager）が有効になります。
-
+Description: >
+  Serverless application to process CSV files and launch EC2 instances based on the data.
 Resources:
 
   # ------------------------------------------------------------
-  # ネットワークリソース
+  # Networking
   # ------------------------------------------------------------
   VPC:
     Type: AWS::EC2::VPC
@@ -38,7 +35,7 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true # パブリックIPを自動割り当て
+      MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-PublicSubnet"
@@ -66,7 +63,7 @@ Resources:
       RouteTableId: !Ref RouteTable
 
   # ------------------------------------------------------------
-  # EC2インスタンス用IAMロール（SSM有効化のため）
+  # Session Manager Role & Instance Profile
   # ------------------------------------------------------------
   EC2InstanceRole:
     Type: AWS::IAM::Role
@@ -78,7 +75,6 @@ Resources:
             Principal:
               Service: "ec2.amazonaws.com"
             Action: "sts:AssumeRole"
-      # Systems Managerを利用するためのAWS管理ポリシー
       ManagedPolicyArns:
         - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
       Tags:
@@ -92,12 +88,11 @@ Resources:
         - !Ref EC2InstanceRole
 
   # ------------------------------------------------------------
-  # S3バケット（CSVファイルアップロード用）
+  # s3 Bucket for CSV files
   # ------------------------------------------------------------
   CsvFileBucket:
     Type: AWS::S3::Bucket
     Properties:
-      # バケット名はグローバルで一意にするため、アカウントIDとリージョンを含める
       BucketName: !Sub "csv-to-ec2-${AWS::AccountId}-${AWS::Region}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -106,14 +101,13 @@ Resources:
         RestrictPublicBuckets: true
 
   # ------------------------------------------------------------
-  # Lambda関数 & 実行ロール
+  # Lambda Function
   # ------------------------------------------------------------
   CsvToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
       Handler: app.lambda_handler
-      Runtime: python3.12 # LTSであるPython 3.12を使用
+      Runtime: python3.12
       CodeUri: src/
       Timeout: 60
       Environment:
@@ -121,20 +115,17 @@ Resources:
           TARGET_SUBNET_ID: !Ref PublicSubnet
           SSM_INSTANCE_PROFILE_ARN: !GetAtt EC2InstanceProfile.Arn
       Policies:
-        # 1. S3バケットからCSVファイルを読み取る権限
-        - S3ReadPolicy:
-            BucketName: !GetAtt CsvFileBucket.Name
-        # 2. EC2インスタンスを作成、タグ付けし、IAMロールをアタッチする権限
         - Statement:
             - Effect: Allow
               Action:
                 - ec2:RunInstances
                 - ec2:CreateTags
-              Resource: "*" # 本番環境では、作成するリソースに応じてより厳密な権限設定を推奨
+              Resource: "*"
             - Effect: Allow
               Action: iam:PassRole
-              Resource: !GetAtt EC2InstanceRole.Arn # 特定のIAMロールのみをEC2に渡すことを許可
-      # Lambdaのトリガー設定 (S3へのCSVファイル作成)
+              Resource: !GetAtt EC2InstanceRole.Arn
+      # EventsプロパティはAWS SAMのショートカット機能
+      # NotificationConfigurationとAWS::Lambda::Permissionを自動的に作成
       Events:
         S3CsvUpload:
           Type: S3
@@ -147,13 +138,27 @@ Resources:
                   - Name: suffix
                     Value: .csv
 
+  # ------------------------------------------------------------
+  # IAM Role for Lambda Function
+  # ------------------------------------------------------------
+  # s3読み取り権限を別に定義し、循環参照を避ける
+  S3ReadPolicyForLambda:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${AWS::StackName}-S3ReadPolicyForLambda"
+      Roles:
+        - !Ref CsvToEc2FunctionRole
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - "s3:GetObject"
+            Resource: !Sub "arn:aws:s3:::${CsvFileBucket}/*"
+
 Outputs:
   S3BucketName:
-    Description: "CSVファイルをアップロードするS3バケット名"
     Value: !Ref CsvFileBucket
   VpcId:
-    Description: "作成されたVPCのID"
     Value: !Ref VPC
   PublicSubnetId:
-    Description: "作成されたパブリックサブネットのID"
     Value: !Ref PublicSubnet

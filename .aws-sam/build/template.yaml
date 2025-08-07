@@ -1,14 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: "S3\u306B\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\u3055\u308C\u305FCSV\u30D5\
-  \u30A1\u30A4\u30EB\u304B\u3089EC2\u30A4\u30F3\u30B9\u30BF\u30F3\u30B9\u3092\u81EA\
-  \u52D5\u4F5C\u6210\u3059\u308B\u30B9\u30BF\u30C3\u30AF\u3002 VPC\u3001\u30B5\u30D6\
-  \u30CD\u30C3\u30C8\u3001S3\u30D0\u30B1\u30C3\u30C8\u3001Lambda\u95A2\u6570\u3001\
-  \u304A\u3088\u3073EC2\u30A4\u30F3\u30B9\u30BF\u30F3\u30B9\u7528\u306EIAM\u30ED\u30FC\
-  \u30EB\u3092\u4F5C\u6210\u3057\u307E\u3059\u3002 \u4F5C\u6210\u3055\u308C\u308B\
-  EC2\u30A4\u30F3\u30B9\u30BF\u30F3\u30B9\u306F\u3001\u30C7\u30D5\u30A9\u30EB\u30C8\
-  \u3067SSM\uFF08Systems Manager\uFF09\u304C\u6709\u52B9\u306B\u306A\u308A\u307E\u3059\
-  \u3002"
+Description: 'Serverless application to process CSV files and launch EC2 instances
+  based on the data.
+
+  '
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -104,8 +99,6 @@ Resources:
   CsvToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName:
-        Fn::Sub: ${AWS::StackName}-CsvToEc2Function
       Handler: app.lambda_handler
       Runtime: python3.12
       CodeUri: CsvToEc2Function
@@ -119,11 +112,6 @@ Resources:
             - EC2InstanceProfile
             - Arn
       Policies:
-      - S3ReadPolicy:
-          BucketName:
-            Fn::GetAtt:
-            - CsvFileBucket
-            - Name
       - Statement:
         - Effect: Allow
           Action:
@@ -150,6 +138,20 @@ Resources:
                   Value: .csv
     Metadata:
       SamResourceId: CsvToEc2Function
+  S3ReadPolicyForLambda:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Sub: ${AWS::StackName}-S3ReadPolicyForLambda
+      Roles:
+      - Ref: CsvToEc2FunctionRole
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          Resource:
+            Fn::Sub: arn:aws:s3:::${CsvFileBucket}/*
 Outputs:
   S3BucketName:
     Description: "CSV\u30D5\u30A1\u30A4\u30EB\u3092\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\
