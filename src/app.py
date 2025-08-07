@@ -6,22 +6,23 @@ import urllib.parse
 s3 = boto3.client('s3')
 ec2 = boto3.client('ec2')
 
-SSM_INSTANCE_PROFILE_ARN = os.environ.get('SSM_INSTANCE_PROFILE_ARN')
-
 def lambda_handler(event, context):
     """
-    S3へのCSVファイルアップロードをトリガーに実行されるメイン関数。
+    This function is triggered by a CSV file upload to S3. It reads the CSV
+    and creates EC2 instances based on its content.
     """
-    # イベント情報からバケット名とファイル名（キー）を取得
+    # Get bucket and key from the S3 event
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
     
-    print(f"処理開始: s3://{bucket}/{key}")
+    print(f"Processing started for: s3://{bucket}/{key}")
 
     try:
+        # These environment variables are critical, fail fast if they are not set.
         subnet_id = os.environ['TARGET_SUBNET_ID']
-    except KeyError:
-        print("Fatal error: TARGET_SUBNET_ID environment variable is not set.")
+        ssm_profile_arn = os.environ['SSM_INSTANCE_PROFILE_ARN']
+    except KeyError as e:
+        print(f"Fatal error: Environment variable {e} is not set.")
         raise
 
     try:
@@ -35,45 +36,38 @@ def lambda_handler(event, context):
                 instance_type = row.get('instance_type')
 
                 if not all([ami_id, instance_type]):
-                    print(f"Skipping row due to missing required fields: {row}")
+                    print(f"Skipping row due to missing required fields (ami_id, instance_type): {row}")
                     continue
-
-                run_instances_params = {
-                    'ImageId': ami_id,
-                    'InstanceType': instance_type,
-                    'SubnetId': subnet_id,
-                    'MinCount': 1,
-                    'MaxCount': 1,
-                    'TagSpecifications': [{
+                
+                print(f"Creating EC2 instance with SSM: AMI={ami_id}, Type={instance_type}")
+                
+                instance_response = ec2.run_instances(
+                    ImageId=ami_id,
+                    InstanceType=instance_type,
+                    SubnetId=subnet_id,
+                    MinCount=1,
+                    MaxCount=1,
+                    IamInstanceProfile={
+                        'Arn': ssm_profile_arn
+                    },
+                    TagSpecifications=[{
                         'ResourceType': 'instance',
                         'Tags': [
                             {'Key': 'Name', 'Value': f'auto-created-from-{os.path.basename(key)}'},
                             {'Key': 'SourceFile', 'Value': f's3://{bucket}/{key}'}
                         ]
                     }]
-                }
-
-                enable_ssm = row.get('enable_ssm', 'OFF').upper() == 'ON'
-                
-                if enable_ssm and SSM_INSTANCE_PROFILE_ARN:
-                    run_instances_params['IamInstanceProfile'] = {
-                        'Arn': SSM_INSTANCE_PROFILE_ARN
-                    }
-                    print(f"Creating EC2 instance with SSM enabled: AMI={ami_id}, Type={instance_type}")
-                else:
-                    print(f"Creating EC2 instance: AMI={ami_id}, Type={instance_type}")
-                
-                instance_response = ec2.run_instances(**run_instances_params)
+                )
                 
                 instance_id = instance_response['Instances'][0]['InstanceId']
                 print(f"Instance creation successful: {instance_id}")
 
             except Exception as e:
-                print(f"Error processing row, skipping: {row}, Error: {e}")
+                print(f"Error processing row, skipping: {row}. Error: {e}")
 
     except Exception as e:
-        print(f"Fatal error occurred: {e}")
+        print(f"A fatal error occurred while processing the file: {e}")
         raise e
 
-    print(f"処理完了: s3://{bucket}/{key}")
+    print(f"Processing complete for: s3://{bucket}/{key}")
     return {'status': 'success'}
