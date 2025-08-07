@@ -1,104 +1,69 @@
-# CSV to EC2 Creator
-S3にCSVファイルをアップロードするだけで、EC2インスタンスを自動的にプロビジョニングするイベント駆動型サーバーレスアプリケーションです。手作業によるEC2インスタンスの立ち上げを完全に自動化し、ワークフローを劇的に効率化します。
+# シンプルEC2自動作成システム
 
-## 📋 Table of Contents
-- [CSV to EC2 Creator](#csv-to-ec2-creator)
-  - [📋 Table of Contents](#-table-of-contents)
-  - [✨ Features](#-features)
-  - [🛠️ Prerequisites](#️-prerequisites)
-  - [🚀 Deployment](#-deployment)
-    - [SAMアプリケーションのビルドとデプロイ](#samアプリケーションのビルドとデプロイ)
-    - [S3バケット名の確認](#s3バケット名の確認)
-  - [⚙️ Usage](#️-usage)
-  - [🗑️ Cleanup](#️-cleanup)
-  - [📄 Infrastructure as Code](#-infrastructure-as-code)
+S3にCSVファイルをアップロードするだけで、EC2インスタンスを自動的に作成するシンプルなサーバーレスアプリケーションです。
 
-## ✨ Features
-- **Infrastructure as Code (IaC) with AWS SAM**: AWS SAM (Serverless Application Model)を使用し、S3バケット、Lambda関数、IAMロールといった全てのインフラリソースをコードで管理します。
-- **Event-Driven Architecture**: S3へのCSVファイルアップロードをトリガーとしてLambda関数が自動起動する、無駄のない効率的な設計です。
-- **Automated EC2 Provisioning**: CSVファイルをS3に置くだけで、手動でのコンソール操作は一切不要です。複数のインスタンスも一度にまとめて作成できます。
-- **Full CI/CD Pipeline Support**: AWS CodePipelineとCodeBuildを組み合わせることで、GitHubへのプッシュをトリガーに自動ビルド・デプロイを行うCI/CDパイプラインを簡単に構築できます。
+## 📋 概要
 
-## 🛠️ Prerequisites
-本プロジェクトをデプロイ・実行するには、以下のツールが必要です。
+AWS SAMを使い、VPCネットワーク、S3バケット、Lambda関数を一度にデプロイします。
+デプロイ後、指定のS3バケットにEC2の設定情報を記述したCSVファイルをアップロードすると、Lambdaがそれを検知してEC2インスタンスを自動で作成します。
+
+## 🛠️ 必要なもの
+
 - AWSアカウント
-- AWS CLI
-- AWS SAM CLI
-- EC2インスタンスをデプロイしたい既存のVPCとサブネット
+- [AWS CLI](https://aws.amazon.com/jp/cli/)
+- [AWS SAM CLI](https://aws.amazon.com/jp/serverless/sam/)
 
-## 🚀 Deployment
-このプロジェクトをAWSアカウントにデプロイする手順です。
-`template.yaml`に定義されたS3バケット、Lambda関数、および関連するIAMロールが作成されます。
+## 🚀 デプロイ手順
 
-### SAMアプリケーションのビルドとデプロイ
-以下のコマンドを実行し、SAM CLIのガイドに従って設定を進めてください。
+1.  **SAMアプリケーションのビルド**
+
+    プロジェクトのルートディレクトリで以下のコマンドを実行します。
+    ```bash
+    sam build
+    ```
+
+2.  **ガイド付きデプロイ**
+
+    以下のコマンドを実行し、表示される質問に答えていきます。ほとんどはデフォルトのままで問題ありません。
+
+    ```bash
+    sam deploy --guided
+    ```
+
+    **設定例:**
+    - **Stack Name**: `simple-ec2-creator` (任意のスタック名)
+    - **AWS Region**: `ap-northeast-1` (任意のリージョン)
+    - **Confirm changes before deploy**: `y`
+    - **Allow SAM CLI IAM role creation**: `y`
+    - **Save arguments to samconfig.toml**: `y`
+
+    デプロイが完了すると、`Outputs`セクションに **S3BucketName** と **PublicSubnetId** が表示されます。この2つの値を控えておいてください。
+
+## ⚙️ 使い方
+
+1.  **`sample.csv` を編集**
+
+    `sample.csv` を開き、`subnet_id` の列を、デプロイ完了時に表示された `PublicSubnetId` の値に書き換えます。必要に応じて `ami_id` や `instance_type` も変更してください。
+
+2.  **S3バケットへアップロード**
+
+    編集したCSVファイルを、デプロイ完了時に表示された `S3BucketName` のバケットにアップロードします。
+
+    ```bash
+    # <YOUR-BUCKET-NAME> と <YOUR-SUBNET-ID> を実際の値に置き換えてください
+    # 例: aws s3 cp sample.csv s3://csv-to-ec2-123456789012-ap-northeast-1/
+    
+    aws s3 cp sample.csv s3://<YOUR-BUCKET-NAME>/
+    ```
+
+3.  **確認**
+
+    アップロード後、数分でLambda関数が実行され、EC2インスタンスが作成されます。AWSマネジメントコンソールのEC2ダッシュボードで確認してください。
+
+## 🗑️ クリーンアップ
+
+作成したすべてのリソースを削除するには、以下のコマンドを実行します。
+
 ```bash
-# SAMアプリケーションをビルド
-sam build
-
-# ガイドに従ってデプロイを実行
-sam deploy --guided
-```
-`sam deploy --guided`の実行中に、以下の設定を推奨します。
-- **Stack Name**: `csv-to-ec2-app-stack`
-- **AWS Region**: `ap-northeast-1` など
-- **Confirm changes before deploy**: `y`
-- **Allow SAM CLI IAM role creation**: `y`
-- **Disable rollback**: `y`
-- **Save arguments to configuration file**: `y`
-
-### S3バケット名の確認
-デプロイが完了すると、コンソールのOutputsセクションにS3バケット名が表示されます。このバケット名を控えておいてください。
-
-## ⚙️ Usage
-1. **CSVファイルの準備**
-   プロビジョニングしたいEC2インスタンスの情報をCSVファイルに記述します。ヘッダーは必ず `subnet_id`, `ami_id`, `instance_type` としてください。
-   ```csv
-   subnet_id,ami_id,instance_type
-   subnet-xxxxxxxxxxxxxxxxx,ami-0c55b159cbfafe1f0,t2.micro
-   subnet-xxxxxxxxxxxxxxxxx,ami-0c55b159cbfafe1f0,t3.small
-   ```
-   - `subnet_id`: EC2をデプロイするサブネットのIDを指定します。
-   - `ami_id`: 使用するリージョンに合ったAMI IDを指定します。
-   - `instance_type`: インスタンスタイプを指定します。
-
-2. **S3バケットへのCSVアップロード**
-   作成したCSVファイルを、デプロイ時に作成されたS3バケットにアップロードします。
-   ```bash
-   # <YOUR-BUCKET-NAME>を sam deploy のアウトプットで確認したバケット名に置き換えてください
-   aws s3 cp instances.csv s3://<YOUR-BUCKET-NAME>/
-   ```
-   アップロードが完了すると、S3イベントがLambda関数を自動的にトリガーし、CSVの内容に基づいてEC2インスタンスが作成されます。
-
-3. **(Optional) Create a New Network Environment**
-   EC2をデプロイするためのVPCやサブネットがない場合は、付属のCloudFormationテンプレートを使って新しいネットワーク環境を構築できます。
-   ```bash
-   aws cloudformation deploy \
-     --template-file awsnetwork.yaml \
-     --stack-name csv-to-ec2-network-stack \
-     --parameter-overrides VpcCidr=10.0.0.0/16 PrivateSubnetCidr=10.0.1.0/24
-   ```
-   デプロイ完了後、以下のコマンドで `PrivateSubnetId` を取得し、CSVファイルに記述してください。
-   ```bash
-   aws cloudformation describe-stacks \
-     --stack-name csv-to-ec2-network-stack \
-     --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetId'].OutputValue" \
-     --output text
-   ```
-
-## 🗑️ Cleanup
-デプロイしたリソースを削除するには、以下のコマンドを実行します。
-```bash
-# アプリケーションスタックの削除
-sam delete --stack-name csv-to-ec2-app-stack
-
-# (Optional) ネットワークスタックを作成した場合のみ実行
-aws cloudformation delete-stack --stack-name csv-to-ec2-network-stack
-```
-
-## 📄 Infrastructure as Code
-このプロジェクトのインフラは、以下のAWSテンプレートで定義されています。
-- `template.yaml`: アプリケーションのコアロジックを定義するAWS SAMテンプレートです。
-- `buildspec.yaml`: AWS CodeBuildでアプリケーションのビルドとデプロイを実行するための手順を定義します。
-- `pipeline.yaml`: AWS CodePipelineによるCI/CDパイプラインを定義するCloudFormationテンプレートです。
-- `awsnetwork.yaml`: (オプション) VPCやサブネットなどのネットワークインフラを定義します。
+# samconfig.tomlで設定したスタック名を指定
+sam delete
