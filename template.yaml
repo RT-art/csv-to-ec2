@@ -36,7 +36,7 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true # Automatically assign public IP to EC2
+      MapPublicIpOnLaunch: true 
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-PublicSubnet"
@@ -64,7 +64,7 @@ Resources:
       RouteTableId: !Ref RouteTable
 
   # ------------------------------------------------------------
-  #  IAM Role for EC2
+  #  IAM Role for EC2 (for SSM Access)
   # ------------------------------------------------------------
   EC2InstanceRole:
     Type: AWS::IAM::Role
@@ -110,7 +110,7 @@ Resources:
     Properties:
       FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
       Handler: app.lambda_handler
-      Runtime: python3.13
+      Runtime: python3.12
       CodeUri: src/
       Timeout: 60
       Environment:
@@ -146,11 +146,8 @@ Resources:
 
 Outputs:
   S3BucketName:
-    Description: "S3 bucket name for uploading CSV files to create EC2 instances"
     Value: !Ref CsvFileBucket
   VpcId:
-    Description: "ID of the created VPC"
     Value: !Ref VPC
   PublicSubnetId:
-    Description: "ID of the created public subnet. Please specify this value in the CSV file."
     Value: !Ref PublicSubnet

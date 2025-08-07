@@ -1,0 +1,7 @@
+# SAM build artifacts
+
+.aws-sam/
+
+# Local configuration file
+
+.sam_outputs
