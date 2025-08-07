@@ -3,9 +3,10 @@ import csv
 import os
 import urllib.parse
 
-# boto3クライアントを初期化
 s3 = boto3.client('s3')
 ec2 = boto3.client('ec2')
+
+SSM_INSTANCE_PROFILE_ARN = os.environ.get('SSM_INSTANCE_PROFILE_ARN')
 
 def lambda_handler(event, context):
     """
@@ -37,22 +38,32 @@ def lambda_handler(event, context):
                     print(f"Skipping row due to missing required fields: {row}")
                     continue
 
-                print(f"Creating EC2 instance: AMI={ami_id}, Type={instance_type}, Subnet={subnet_id}")
-
-                instance_response = ec2.run_instances(
-                    ImageId=ami_id,
-                    InstanceType=instance_type,
-                    SubnetId=subnet_id,
-                    MinCount=1,
-                    MaxCount=1,
-                    TagSpecifications=[{
+                run_instances_params = {
+                    'ImageId': ami_id,
+                    'InstanceType': instance_type,
+                    'SubnetId': subnet_id,
+                    'MinCount': 1,
+                    'MaxCount': 1,
+                    'TagSpecifications': [{
                         'ResourceType': 'instance',
                         'Tags': [
                             {'Key': 'Name', 'Value': f'auto-created-from-{os.path.basename(key)}'},
                             {'Key': 'SourceFile', 'Value': f's3://{bucket}/{key}'}
                         ]
                     }]
-                )
+                }
+
+                enable_ssm = row.get('enable_ssm', 'OFF').upper() == 'ON'
+                
+                if enable_ssm and SSM_INSTANCE_PROFILE_ARN:
+                    run_instances_params['IamInstanceProfile'] = {
+                        'Arn': SSM_INSTANCE_PROFILE_ARN
+                    }
+                    print(f"Creating EC2 instance with SSM enabled: AMI={ami_id}, Type={instance_type}")
+                else:
+                    print(f"Creating EC2 instance: AMI={ami_id}, Type={instance_type}")
+                
+                instance_response = ec2.run_instances(**run_instances_params)
                 
                 instance_id = instance_response['Instances'][0]['InstanceId']
                 print(f"Instance creation successful: {instance_id}")
