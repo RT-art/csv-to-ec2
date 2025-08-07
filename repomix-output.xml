@@ -126,77 +126,6 @@ functions = ["CsvToEc2Function"]
 [layer_build_definitions]
 </file>
 
-<file path="src/app.py">
-import boto3
-import csv
-import os
-import urllib.parse
-
-# boto3クライアントを初期化
-s3 = boto3.client('s3')
-ec2 = boto3.client('ec2')
-
-def lambda_handler(event, context):
-    """
-    S3へのCSVファイルアップロードをトリガーに実行されるメイン関数。
-    """
-    # イベント情報からバケット名とファイル名（キー）を取得
-    bucket = event['Records'][0]['s3']['bucket']['name']
-    key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
-    
-    print(f"処理開始: s3://{bucket}/{key}")
-
-    try:
-        subnet_id = os.environ['TARGET_SUBNET_ID']
-    except KeyError:
-        print("Fatal error: TARGET_SUBNET_ID environment variable is not set.")
-        raise
-
-    try:
-        response = s3.get_object(Bucket=bucket, Key=key)
-        lines = response['Body'].read().decode('utf-8').splitlines()
-        reader = csv.DictReader(lines)
-
-        for row in reader:
-            try:
-                ami_id = row.get('ami_id')
-                instance_type = row.get('instance_type')
-
-                if not all([ami_id, instance_type]):
-                    print(f"Skipping row due to missing required fields: {row}")
-                    continue
-
-                print(f"Creating EC2 instance: AMI={ami_id}, Type={instance_type}, Subnet={subnet_id}")
-
-                instance_response = ec2.run_instances(
-                    ImageId=ami_id,
-                    InstanceType=instance_type,
-                    SubnetId=subnet_id,
-                    MinCount=1,
-                    MaxCount=1,
-                    TagSpecifications=[{
-                        'ResourceType': 'instance',
-                        'Tags': [
-                            {'Key': 'Name', 'Value': f'auto-created-from-{os.path.basename(key)}'},
-                            {'Key': 'SourceFile', 'Value': f's3://{bucket}/{key}'}
-                        ]
-                    }]
-                )
-                
-                instance_id = instance_response['Instances'][0]['InstanceId']
-                print(f"Instance creation successful: {instance_id}")
-
-            except Exception as e:
-                print(f"Error processing row, skipping: {row}, Error: {e}")
-
-    except Exception as e:
-        print(f"Fatal error occurred: {e}")
-        raise e
-
-    print(f"処理完了: s3://{bucket}/{key}")
-    return {'status': 'success'}
-</file>
-
 <file path=".aws-sam/build/template.yaml">
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
@@ -273,10 +202,93 @@ Outputs:
       Ref: S3Bucket
 </file>
 
+<file path="src/app.py">
+import boto3
+import csv
+import os
+import urllib.parse
+
+s3 = boto3.client('s3')
+ec2 = boto3.client('ec2')
+
+SSM_INSTANCE_PROFILE_ARN = os.environ.get('SSM_INSTANCE_PROFILE_ARN')
+
+def lambda_handler(event, context):
+    """
+    S3へのCSVファイルアップロードをトリガーに実行されるメイン関数。
+    """
+    # イベント情報からバケット名とファイル名（キー）を取得
+    bucket = event['Records'][0]['s3']['bucket']['name']
+    key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
+    
+    print(f"処理開始: s3://{bucket}/{key}")
+
+    try:
+        subnet_id = os.environ['TARGET_SUBNET_ID']
+    except KeyError:
+        print("Fatal error: TARGET_SUBNET_ID environment variable is not set.")
+        raise
+
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        lines = response['Body'].read().decode('utf-8').splitlines()
+        reader = csv.DictReader(lines)
+
+        for row in reader:
+            try:
+                ami_id = row.get('ami_id')
+                instance_type = row.get('instance_type')
+
+                if not all([ami_id, instance_type]):
+                    print(f"Skipping row due to missing required fields: {row}")
+                    continue
+
+                run_instances_params = {
+                    'ImageId': ami_id,
+                    'InstanceType': instance_type,
+                    'SubnetId': subnet_id,
+                    'MinCount': 1,
+                    'MaxCount': 1,
+                    'TagSpecifications': [{
+                        'ResourceType': 'instance',
+                        'Tags': [
+                            {'Key': 'Name', 'Value': f'auto-created-from-{os.path.basename(key)}'},
+                            {'Key': 'SourceFile', 'Value': f's3://{bucket}/{key}'}
+                        ]
+                    }]
+                }
+
+                enable_ssm = row.get('enable_ssm', 'OFF').upper() == 'ON'
+                
+                if enable_ssm and SSM_INSTANCE_PROFILE_ARN:
+                    run_instances_params['IamInstanceProfile'] = {
+                        'Arn': SSM_INSTANCE_PROFILE_ARN
+                    }
+                    print(f"Creating EC2 instance with SSM enabled: AMI={ami_id}, Type={instance_type}")
+                else:
+                    print(f"Creating EC2 instance: AMI={ami_id}, Type={instance_type}")
+                
+                instance_response = ec2.run_instances(**run_instances_params)
+                
+                instance_id = instance_response['Instances'][0]['InstanceId']
+                print(f"Instance creation successful: {instance_id}")
+
+            except Exception as e:
+                print(f"Error processing row, skipping: {row}, Error: {e}")
+
+    except Exception as e:
+        print(f"Fatal error occurred: {e}")
+        raise e
+
+    print(f"処理完了: s3://{bucket}/{key}")
+    return {'status': 'success'}
+</file>
+
 <file path="sample.csv">
-ami_id,instance_type
-ami-0c55b159cbfafe1f0,t2.micro
-ami-0c55b159cbfafe1f0,t3.small
+ami_id,instance_type,enable_ssm
+ami-0c55b159cbfafe1f0,t2.micro,ON
+ami-0c55b159cbfafe1f0,t3.small,OFF
+ami-0c55b159cbfafe1f0,t2.nano,
 </file>
 
 <file path="template.yaml">
@@ -346,6 +358,31 @@ Resources:
       RouteTableId: !Ref RouteTable
 
   # ------------------------------------------------------------
+  #  IAM Role for EC2
+  # ------------------------------------------------------------
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-EC2InstanceRole"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # ------------------------------------------------------------
   #  S3 Bucket
   # ------------------------------------------------------------
   CsvFileBucket:
@@ -373,6 +410,7 @@ Resources:
       Environment:
         Variables:
           TARGET_SUBNET_ID: !Ref PublicSubnet
+          SSM_INSTANCE_PROFILE_ARN: !GetAtt EC2InstanceProfile.Arn
       Policies:
         # 1. Permission to read CSV files from S3 bucket
         - S3ReadPolicy:
@@ -384,6 +422,9 @@ Resources:
               - ec2:RunInstances
               - ec2:CreateTags
             Resource: "*" # In production, specify resources more strictly
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt EC2InstanceRole.Arn
       # Lambda trigger configuration
       Events:
         S3CsvUpload:
@@ -421,7 +462,7 @@ S3にアップロードされたCSVファイルに基づき、EC2インスタン
 ## 特徴
 
 - **設定不要**: `sam deploy`でデプロイすれば、必要なVPCやSubnetも自動で構築。Subnet IDなどを手動で設定する必要はありません。
-- **簡単操作**: 作成したいEC2のAMI IDとインスタンスタイプをCSVに書いて、S3にアップロードするだけで自動でインスタンスが作成されます。
+- **簡単操作**: 作成したいEC2のAMI IDとインスタンスタイプをCSVに書いて、S3にアップロードするだけで自動でインスタンスが作成されます。`enable_ssm` 列を追加して `ON` を指定すると、SSMセッションマネージャーで接続可能なインスタンスを作成できます。
 
 ## 使い方
 
@@ -437,7 +478,7 @@ S3にアップロードされたCSVファイルに基づき、EC2インスタン
 
 2.  **CSVファイルのアップロード**
 
-    `sample.csv` を参考に、作成したいEC2の情報を記載したCSVファイルを用意します。（`ami_id`と`instance_type`の列があればOKです）
+`sample.csv` を参考に、作成したいEC2の情報を記載したCSVファイルを用意します。（`ami_id`と`instance_type`の列は必須です。`enable_ssm` 列は任意で、SSM接続を有効にしたい場合に `ON` と記載します）
     用意したCSVファイルを、手順1で控えたS3バケットにアップロードします。
 
     ```bash
