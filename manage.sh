@@ -24,7 +24,7 @@ usage() {
     echo "コマンド:"
     echo "  deploy   : AWS SAMスタックをビルド・デプロイします。ネットワークリソース、S3バケット、Lambdaを作成します。"
     echo "  upload   : S3バケットにCSVファイルをアップロードし、EC2インスタンス作成をトリガーします。"
-    echo "             引数なしの場合、カレントディレクトリに存在する単一の.csvファイルを自動で検出します。"
+    echo "           : 引数なしの場合、カレントディレクトリに存在する単一の.csvファイルを自動で検出します。"
     echo "  delete   : 作成されたすべてのAWSリソース（SAMスタック）を削除します。"
     echo
 }
@@ -114,6 +114,24 @@ upload_csv() {
 
 # SAMスタックの削除
 delete_stack() {
+    echo ">>> SAMスタック '$STACK_NAME' の削除準備をしています..."
+
+    # 設定ファイルからバケット名を取得して、バケット内を空にする
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        if [ -n "$S3_BUCKET_NAME" ]; then
+            echo ">>> S3バケット '$S3_BUCKET_NAME' の中身を空にしています..."
+            # バケットが存在するか確認してから削除コマンドを実行
+            if aws s3api head-bucket --bucket "$S3_BUCKET_NAME" 2>/dev/null; then
+                aws s3 rm "s3://$S3_BUCKET_NAME/" --recursive
+            else
+                echo "-> バケット '$S3_BUCKET_NAME' は既に存在しないため、スキップします。"
+            fi
+        fi
+    else
+        echo "-> 設定ファイルが見つかりません。S3バケットのクリーンアップはスキップします。"
+    fi
+
     echo ">>> SAMスタック '$STACK_NAME' をリージョン '$REGION' から削除します..."
     echo "!!! 注意: この操作により、本スクリプトで作成されたすべてのAWSリソースが削除されます。!!!"
 
