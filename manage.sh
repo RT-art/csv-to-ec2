@@ -1,42 +1,47 @@
 #!/bin/bash
 
-# A script to manage the deployment and usage of the csv-to-ec2 SAM application.
+# csv-to-ec2 SAMアプリケーションのデプロイと管理を行うスクリプト
 
-# Stop script on any error
+# エラー発生時にスクリプトを停止
 set -e
 
-# --- Configuration ---
-# File to store the outputs from the SAM deployment, like the S3 bucket name.
+# --- 設定 ---
+# SAMデプロイのアウトプット（S3バケット名など）を保存するファイル
 CONFIG_FILE=".sam_outputs"
-STACK_NAME="csv-to-ec2-stack" # You can change this default stack name
-REGION=$(aws configure get region)
-[ -z "$REGION" ] && REGION="ap-northeast-1" # Default to Tokyo if not set
 
-# --- Helper Functions ---
-# Print usage instructions
+# CloudFormationのスタック名（変更可能）
+STACK_NAME="csv-to-ec2-stack"
+
+# AWSリージョンを自動取得。設定がなければ東京リージョンをデフォルトに
+REGION=$(aws configure get region)
+[ -z "$REGION" ] && REGION="ap-northeast-1"
+
+# --- ヘルパー関数 ---
+# 使い方を表示
 usage() {
-    echo "Usage: $0 {deploy|upload|delete}"
+    echo "使い方: $0 {deploy|upload|delete}"
     echo
-    echo "Commands:"
-    echo "  deploy   : Builds and deploys the AWS SAM stack. Creates network resources, S3 bucket, and Lambda."
-    echo "  upload   : Uploads a CSV file to the S3 bucket to trigger instance creation. Auto-detects a single .csv file if no argument is given."
-    echo "  delete   : Deletes the entire AWS SAM stack and all created resources."
+    echo "コマンド:"
+    echo "  deploy   : AWS SAMスタックをビルド・デプロイします。ネットワークリソース、S3バケット、Lambdaを作成します。"
+    echo "  upload   : S3バケットにCSVファイルをアップロードし、EC2インスタンス作成をトリガーします。"
+    echo "             引数なしの場合、カレントディレクトリに存在する単一の.csvファイルを自動で検出します。"
+    echo "  delete   : 作成されたすべてのAWSリソース（SAMスタック）を削除します。"
     echo
 }
 
-# --- Main Functions ---
-
-# Build and Deploy the SAM stack
+# --- メイン関数 ---
+# SAMスタックのビルドとデプロイ
 deploy_stack() {
-    echo ">>> Building the SAM application..."
+    echo ">>> SAMアプリケーションをビルドしています..."
     sam build
 
-    echo ">>> Deploying the stack '$STACK_NAME' to region '$REGION'..."
+    echo ">>> スタック '$STACK_NAME' をリージョン '$REGION' にデプロイしています..."
+    # --guided オプションは初回デプロイ時に役立ちます。2回目以降は samconfig.toml が使用されます。
     sam deploy --stack-name "$STACK_NAME" --region "$REGION" --capabilities CAPABILITY_IAM --resolve-s3 --confirm-changeset
 
-    echo ">>> Deployment successful. Fetching S3 bucket name..."
-    
-    # Get the S3 bucket name from the CloudFormation stack outputs
+    echo ">>> デプロイ成功。S3バケット名を取得しています..."
+
+    # CloudFormationスタックのアウトプットからS3バケット名を取得
     BUCKET_NAME=$(aws cloudformation describe-stacks \
         --stack-name "$STACK_NAME" \
         --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" \
@@ -44,109 +49,110 @@ deploy_stack() {
         --region "$REGION")
 
     if [ -z "$BUCKET_NAME" ]; then
-        echo "Error: Could not retrieve S3 bucket name from stack outputs."
-        echo "Please check the AWS Management Console for the stack status."
+        echo "エラー: S3バケット名を取得できませんでした。"
+        echo "AWSマネジメントコンソールでスタックの状態を確認してください。"
         exit 1
     fi
 
-    # Save the bucket name to the config file for the 'upload' command
+    # 後続の 'upload' コマンドで使うため、バケット名をファイルに保存
     echo "S3_BUCKET_NAME=$BUCKET_NAME" > "$CONFIG_FILE"
-    
-    echo "✔ Setup complete."
-    echo "  S3 Bucket '$BUCKET_NAME' is ready."
-    echo "  You can now use './manage.sh upload' to create EC2 instances."
+
+    echo "✔ セットアップ完了。"
+    echo "  S3バケット '$BUCKET_NAME' の準備ができました。"
+    echo "  './manage.sh upload' コマンドでEC2インスタンスを作成できます。"
 }
 
-# Upload a CSV file to the S3 bucket
+# S3バケットへCSVファイルをアップロード
 upload_csv() {
     if [ ! -f "$CONFIG_FILE" ]; then
-        echo "Error: Configuration file '$CONFIG_FILE' not found."
-        echo "Please run './manage.sh deploy' first to set up the environment."
+        echo "エラー: 設定ファイル '$CONFIG_FILE' が見つかりません。"
+        echo "最初に './manage.sh deploy' を実行してください。"
         exit 1
     fi
 
-    # Load the bucket name from the config file
+    # 設定ファイルからバケット名を読み込む
     source "$CONFIG_FILE"
 
     if [ -z "$S3_BUCKET_NAME" ]; then
-        echo "Error: S3_BUCKET_NAME not found in '$CONFIG_FILE'."
+        echo "エラー: '$CONFIG_FILE' 内に S3_BUCKET_NAME が見つかりません。"
         exit 1
     fi
 
-    local CSV_FILE
-    # If an argument is given, use it as the CSV file path.
-    if [ -n "$1" ]; then
-        CSV_FILE="$1"
-    else
-        # Otherwise, try to auto-detect a single CSV file in the current directory.
-        local csv_files=(*.csv) # Use a robust bash array
-        local num_files=${#csv_files[@]}
+    CSV_FILE="$1" # 引数で渡されたファイルパス
+    if [ -z "$CSV_FILE" ]; then
+        # 引数がない場合、カレントディレクトリから.csvファイルを自動検出
+        shopt -s nullglob
+        CSV_FILES=(*.csv)
+        shopt -u nullglob
 
-        if [ "$num_files" -eq 1 ]; then
-            CSV_FILE="${csv_files[0]}"
-            echo ">>> Auto-detected CSV file: '$CSV_FILE'"
-        elif [ "$num_files" -eq 0 ]; then
-            echo "Error: No CSV file found in the current directory."
-            echo "Please place a single .csv file here or specify the file path:"
-            echo "  ./manage.sh upload <your-file.csv>"
+        if [ ${#CSV_FILES[@]} -eq 1 ]; then
+            CSV_FILE="${CSV_FILES[0]}"
+            echo ">>> CSVファイルを自動検出しました: '$CSV_FILE'"
+        elif [ ${#CSV_FILES[@]} -eq 0 ]; then
+            echo "エラー: カレントディレクトリにCSVファイルが見つかりません。"
+            echo "CSVファイルを配置するか、ファイルパスを指定してください:"
+            echo "  使用例: ./manage.sh upload sample.csv"
             exit 1
         else
-            echo "Error: Multiple CSV files found. Please specify which one to upload:"
-            printf " - %s\n" "${csv_files[@]}"
-            echo "Usage: ./manage.sh upload <file-to-upload.csv>"
+            echo "エラー: 複数のCSVファイルが見つかりました。アップロードするファイルを指定してください:"
+            printf " - %s\n" "${CSV_FILES[@]}"
+            echo "  使用例: ./manage.sh upload ${CSV_FILES[0]}"
             exit 1
         fi
     fi
 
     if [ ! -f "$CSV_FILE" ]; then
-        echo "Error: CSV file '$CSV_FILE' not found."
+        echo "エラー: CSVファイル '$CSV_FILE' が見つかりません。"
         exit 1
     fi
 
-    echo ">>> Uploading '$CSV_FILE' to bucket '$S3_BUCKET_NAME'..."
+    echo ">>> '$CSV_FILE' をバケット '$S3_BUCKET_NAME' にアップロードしています..."
     aws s3 cp "$CSV_FILE" "s3://$S3_BUCKET_NAME/"
 
-    echo "✔ File uploaded successfully. EC2 instance creation has been triggered."
+    echo "✔ ファイルがアップロードされました。EC2インスタンスの作成がトリガーされます。"
 }
 
-# Delete the SAM stack
+# SAMスタックの削除
 delete_stack() {
-    echo ">>> Deleting the SAM stack '$STACK_NAME' from region '$REGION'..."
-    echo "!!! This will remove all AWS resources created by this script. !!!"
-    
+    echo ">>> SAMスタック '$STACK_NAME' をリージョン '$REGION' から削除します..."
+    echo "!!! 注意: この操作により、本スクリプトで作成されたすべてのAWSリソースが削除されます。!!!"
+
     sam delete --stack-name "$STACK_NAME" --region "$REGION" --no-prompts
 
-    # Clean up local config file
+    # ローカルの設定ファイルをクリーンアップ
     if [ -f "$CONFIG_FILE" ]; then
         rm "$CONFIG_FILE"
     fi
 
-    echo "✔ Stack deleted successfully."
+    echo "✔ スタックの削除が完了しました。"
 }
 
-
-# --- Script Entrypoint ---
-# Check for required tools
+# --- スクリプトのエントリポイント ---
+# 必要なコマンドの存在チェック
 if ! command -v sam &> /dev/null || ! command -v aws &> /dev/null; then
-    echo "Error: 'sam' and 'aws' CLI tools are required."
-    echo "Please install them and configure your AWS credentials."
+    echo "エラー: 'sam' および 'aws' CLIが必要です。"
+    echo "これらをインストールし、AWS認証情報を設定してください。"
     exit 1
 fi
 
-
-# Main command router
+# メインのコマンド振り分け
 case "$1" in
     deploy)
         deploy_stack
         ;;
     upload)
-        # Pass the second argument (the filename) to the upload function
+        # 2番目の引数（ファイル名）をupload関数に渡す
         upload_csv "$2"
         ;;
     delete)
         delete_stack
         ;;
+    ""|--help|-h) # 引数なし、またはヘルプオプションの場合
+        usage
+        exit 0
+        ;;
     *)
+        echo "エラー: 不明なコマンド '$1'"
         usage
         exit 1
         ;;
