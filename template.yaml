@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  Stack to automatically create EC2 instances from CSV files uploaded to S3.
+  Stack to automatically create EC2 instances from JSON files uploaded to S3.
   Creates VPC, Subnet, S3 bucket, and Lambda function.
 
 Resources:
@@ -91,11 +91,11 @@ Resources:
   # ------------------------------------------------------------
   #  S3 Bucket
   # ------------------------------------------------------------
-  CsvFileBucket:
+  JsonFileBucket:
     Type: AWS::S3::Bucket
     Properties:
       # Bucket name must be globally unique, so includes Account ID and Region
-      BucketName: !Sub "csv-to-ec2-${AWS::AccountId}-${AWS::Region}"
+      BucketName: !Sub "json-to-ec2-${AWS::AccountId}-${AWS::Region}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -105,10 +105,10 @@ Resources:
   # ------------------------------------------------------------
   #  Lambda Function & IAM Role
   # ------------------------------------------------------------
-  CsvToEc2Function:
+  JsonToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
+      FunctionName: !Sub "${AWS::StackName}-JsonToEc2Function"
       Handler: app.lambda_handler
       Runtime: python3.13
       CodeUri: src/
@@ -118,9 +118,9 @@ Resources:
           TARGET_SUBNET_ID: !Ref PublicSubnet
           SSM_INSTANCE_PROFILE_ARN: !GetAtt EC2InstanceProfile.Arn
       Policies:
-        # 1. Permission to read CSV files from S3 bucket
+        # 1. Permission to read JSON files from S3 bucket
         - S3ReadPolicy:
-            BucketName: !GetAtt CsvFileBucket.Name
+            BucketName: !GetAtt JsonFileBucket.Name
         # 2. Permission to create and tag EC2 instances
         - Statement:
           - Effect: Allow
@@ -133,24 +133,24 @@ Resources:
             Resource: !GetAtt EC2InstanceRole.Arn
       # Lambda trigger configuration
       Events:
-        S3CsvUpload:
+        S3JsonUpload:
           Type: S3
           Properties:
-            Bucket: !Ref CsvFileBucket
+            Bucket: !Ref JsonFileBucket
             Events: s3:ObjectCreated:*
             Filter:
               S3Key:
                 Rules:
                   - Name: suffix
-                    Value: .csv
+                    Value: .json
 
 Outputs:
   S3BucketName:
-    Description: "S3 bucket name for uploading CSV files to create EC2 instances"
-    Value: !Ref CsvFileBucket
+    Description: "S3 bucket name for uploading JSON files to create EC2 instances"
+    Value: !Ref JsonFileBucket
   VpcId:
     Description: "ID of the created VPC"
     Value: !Ref VPC
   PublicSubnetId:
-    Description: "ID of the created public subnet. Please specify this value in the CSV file."
+    Description: "ID of the created public subnet. This is automatically used by the Lambda function."
     Value: !Ref PublicSubnet

@@ -1,5 +1,5 @@
 import boto3
-import csv
+import json
 import os
 import urllib.parse
 
@@ -10,13 +10,13 @@ SSM_INSTANCE_PROFILE_ARN = os.environ.get('SSM_INSTANCE_PROFILE_ARN')
 
 def lambda_handler(event, context):
     """
-    S3へのCSVファイルアップロードをトリガーに実行されるメイン関数。
+    Main function executed when a JSON file is uploaded to S3.
     """
-    # イベント情報からバケット名とファイル名（キー）を取得
+    # Get bucket name and file name (key) from event information
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
-    
-    print(f"処理開始: s3://{bucket}/{key}")
+
+    print(f"Processing started: s3://{bucket}/{key}")
 
     try:
         subnet_id = os.environ['TARGET_SUBNET_ID']
@@ -26,16 +26,21 @@ def lambda_handler(event, context):
 
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
-        lines = response['Body'].read().decode('utf-8').splitlines()
-        reader = csv.DictReader(lines)
+        content = response['Body'].read().decode('utf-8')
+        instances_to_create = json.loads(content)
 
-        for row in reader:
+        # Assume JSON content is a list
+        if not isinstance(instances_to_create, list):
+            print(f"Error: JSON file content is not a list. File: s3://{bucket}/{key}")
+            return {'status': 'failed', 'reason': 'Invalid JSON format'}
+
+        for item in instances_to_create:
             try:
-                ami_id = row.get('ami_id')
-                instance_type = row.get('instance_type')
+                ami_id = item.get('ami_id')
+                instance_type = item.get('instance_type')
 
                 if not all([ami_id, instance_type]):
-                    print(f"Skipping row due to missing required fields: {row}")
+                    print(f"Skipping item due to missing required fields: {item}")
                     continue
 
                 run_instances_params = {
@@ -53,7 +58,7 @@ def lambda_handler(event, context):
                     }]
                 }
 
-                enable_ssm = row.get('enable_ssm', 'OFF').upper() == 'ON'
+                enable_ssm = str(item.get('enable_ssm', 'OFF')).upper() == 'ON'
                 
                 if enable_ssm and SSM_INSTANCE_PROFILE_ARN:
                     run_instances_params['IamInstanceProfile'] = {
@@ -69,11 +74,14 @@ def lambda_handler(event, context):
                 print(f"Instance creation successful: {instance_id}")
 
             except Exception as e:
-                print(f"Error processing row, skipping: {row}, Error: {e}")
+                print(f"Error processing item, skipping: {item}, Error: {e}")
 
+    except json.JSONDecodeError as e:
+        print(f"Fatal error: Failed to decode JSON from s3://{bucket}/{key}. Error: {e}")
+        raise e
     except Exception as e:
         print(f"Fatal error occurred: {e}")
         raise e
 
-    print(f"処理完了: s3://{bucket}/{key}")
+    print(f"Processing complete: s3://{bucket}/{key}")
     return {'status': 'success'}

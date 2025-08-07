@@ -1,0 +1,16 @@
+[
+{
+"ami_id": "ami-0c55b159cbfafe1f0",
+"instance_type": "t2.micro",
+"enable_ssm": "ON"
+},
+{
+"ami_id": "ami-0c55b159cbfafe1f0",
+"instance_type": "t3.small",
+"enable_ssm": "OFF"
+},
+{
+"ami_id": "ami-0c55b159cbfafe1f0",
+"instance_type": "t2.nano"
+}
+]
