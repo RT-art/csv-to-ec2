@@ -1,73 +1,167 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: A simple and refined stack to create an EC2 instance from a CSV file
-  in S3 using Lambda.
+Description: "S3\u306B\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\u3055\u308C\u305FCSV\u30D5\
+  \u30A1\u30A4\u30EB\u304B\u3089EC2\u30A4\u30F3\u30B9\u30BF\u30F3\u30B9\u3092\u81EA\
+  \u52D5\u4F5C\u6210\u3059\u308B\u30B9\u30BF\u30C3\u30AF\u3002 VPC\u3001\u30B5\u30D6\
+  \u30CD\u30C3\u30C8\u3001S3\u30D0\u30B1\u30C3\u30C8\u3001Lambda\u95A2\u6570\u3001\
+  \u304A\u3088\u3073EC2\u30A4\u30F3\u30B9\u30BF\u30F3\u30B9\u7528\u306EIAM\u30ED\u30FC\
+  \u30EB\u3092\u4F5C\u6210\u3057\u307E\u3059\u3002 \u4F5C\u6210\u3055\u308C\u308B\
+  EC2\u30A4\u30F3\u30B9\u30BF\u30F3\u30B9\u306F\u3001\u30C7\u30D5\u30A9\u30EB\u30C8\
+  \u3067SSM\uFF08Systems Manager\uFF09\u304C\u6709\u52B9\u306B\u306A\u308A\u307E\u3059\
+  \u3002"
 Resources:
-  S3Bucket:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-VPC
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-IGW
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: InternetGateway
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-PublicSubnet
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-RouteTable
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: RouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: InternetGateway
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet
+      RouteTableId:
+        Ref: RouteTable
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-EC2InstanceRole
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - Ref: EC2InstanceRole
+  CsvFileBucket:
     Type: AWS::S3::Bucket
-    DependsOn: S3InvokePermission
     Properties:
       BucketName:
-        Fn::Sub: csv-ec2-creator-${AWS::AccountId}-${AWS::Region}
-      NotificationConfiguration:
-        LambdaConfigurations:
-        - Event: s3:ObjectCreated:*
-          Function:
-            Fn::GetAtt:
-            - CsvToEc2Function
-            - Arn
-          Filter:
-            S3Key:
-              Rules:
-              - Name: suffix
-                Value: .csv
+        Fn::Sub: csv-to-ec2-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
   CsvToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName:
         Fn::Sub: ${AWS::StackName}-CsvToEc2Function
       Handler: app.lambda_handler
-      Runtime: python3.13
-      Timeout: 60
+      Runtime: python3.12
       CodeUri: CsvToEc2Function
+      Timeout: 60
+      Environment:
+        Variables:
+          TARGET_SUBNET_ID:
+            Ref: PublicSubnet
+          SSM_INSTANCE_PROFILE_ARN:
+            Fn::GetAtt:
+            - EC2InstanceProfile
+            - Arn
       Policies:
-      - Version: '2012-10-17'
-        Statement:
+      - S3ReadPolicy:
+          BucketName:
+            Fn::GetAtt:
+            - CsvFileBucket
+            - Name
+      - Statement:
         - Effect: Allow
-          Action: s3:GetObject
-          Resource:
-            Fn::Sub: arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*
+          Action:
+          - ec2:RunInstances
+          - ec2:CreateTags
+          Resource: '*'
         - Effect: Allow
-          Action: ec2:RunInstances
+          Action: iam:PassRole
           Resource:
-          - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
-          - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
-          - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
-          - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
-          - Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
-          - Fn::Sub: arn:aws:ec2:${AWS::Region}::image/*
-        - Effect: Allow
-          Action: ec2:CreateTags
-          Resource:
-            Fn::Sub: arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
-          Condition:
-            StringEquals:
-              ec2:CreateAction: RunInstances
+            Fn::GetAtt:
+            - EC2InstanceRole
+            - Arn
+      Events:
+        S3CsvUpload:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: CsvFileBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .csv
     Metadata:
       SamResourceId: CsvToEc2Function
-  S3InvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::GetAtt:
-        - CsvToEc2Function
-        - Arn
-      Action: lambda:InvokeFunction
-      Principal: s3.amazonaws.com
-      SourceArn:
-        Fn::Sub: arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}
 Outputs:
   S3BucketName:
-    Description: Bucket to upload CSV files.
+    Description: "CSV\u30D5\u30A1\u30A4\u30EB\u3092\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\
+      \u3059\u308BS3\u30D0\u30B1\u30C3\u30C8\u540D"
     Value:
-      Ref: S3Bucket
+      Ref: CsvFileBucket
+  VpcId:
+    Description: "\u4F5C\u6210\u3055\u308C\u305FVPC\u306EID"
+    Value:
+      Ref: VPC
+  PublicSubnetId:
+    Description: "\u4F5C\u6210\u3055\u308C\u305F\u30D1\u30D6\u30EA\u30C3\u30AF\u30B5\
+      \u30D6\u30CD\u30C3\u30C8\u306EID"
+    Value:
+      Ref: PublicSubnet
