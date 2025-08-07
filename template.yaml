@@ -1,60 +1,125 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: A simple and refined stack to create an EC2 instance from a CSV file in S3 using Lambda.
+Description: >-
+  Stack to automatically create EC2 instances from CSV files uploaded to S3.
+  Creates VPC, Subnet, S3 bucket, and Lambda function.
 
 Resources:
-  S3Bucket:
-    Type: AWS::S3::Bucket
-    DependsOn: S3InvokePermission
+  # ------------------------------------------------------------
+  #  Network Resources
+  # ------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
     Properties:
-      BucketName: !Sub "csv-ec2-creator-${AWS::AccountId}-${AWS::Region}"
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Function: !GetAtt CsvToEc2Function.Arn
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: suffix
-                    Value: .csv
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPC"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-IGW"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true # Automatically assign public IP to EC2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-PublicSubnet"
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-RouteTable"
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  # ------------------------------------------------------------
+  #  S3 Bucket
+  # ------------------------------------------------------------
+  CsvFileBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Bucket name must be globally unique, so includes Account ID and Region
+      BucketName: !Sub "csv-to-ec2-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ------------------------------------------------------------
+  #  Lambda Function & IAM Role
+  # ------------------------------------------------------------
   CsvToEc2Function:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
       Handler: app.lambda_handler
-      Runtime: python3.13
-      Timeout: 60
+      Runtime: python3.12
       CodeUri: src/
+      Timeout: 60
+      # IAM policies for this Lambda function
       Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action: s3:GetObject
-              Resource: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}/*"
-            - Effect: Allow
-              Action: ec2:RunInstances
-              Resource:
-                - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-                - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
-                - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
-                - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
-                - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
-                - !Sub "arn:aws:ec2:${AWS::Region}::image/*"
-            - Effect: Allow
-              Action: ec2:CreateTags
-              Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-              Condition:
-                StringEquals:
-                  ec2:CreateAction: "RunInstances"
-  S3InvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt CsvToEc2Function.Arn
-      Action: lambda:InvokeFunction
-      Principal: s3.amazonaws.com
-      SourceArn: !Sub "arn:aws:s3:::csv-ec2-creator-${AWS::AccountId}-${AWS::Region}"
+        # 1. Permission to read CSV files from S3 bucket
+        - S3ReadPolicy:
+            BucketName: !GetAtt CsvFileBucket.Name
+        # 2. Permission to create and tag EC2 instances
+        - Statement:
+          - Effect: Allow
+            Action:
+              - ec2:RunInstances
+              - ec2:CreateTags
+            Resource: "*" # In production, specify resources more strictly
+      # Lambda trigger configuration
+      Events:
+        S3CsvUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref CsvFileBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .csv
 
 Outputs:
   S3BucketName:
-    Description: "Bucket to upload CSV files."
-    Value: !Ref S3Bucket
+    Description: "S3 bucket name for uploading CSV files to create EC2 instances"
+    Value: !Ref CsvFileBucket
+  VpcId:
+    Description: "ID of the created VPC"
+    Value: !Ref VPC
+  PublicSubnetId:
+    Description: "ID of the created public subnet. Please specify this value in the CSV file."
+    Value: !Ref PublicSubnet
