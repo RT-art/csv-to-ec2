@@ -1,16 +1,19 @@
 [
-{
-"ami_id": "ami-0c55b159cbfafe1f0",
-"instance_type": "t2.micro",
-"enable_ssm": "ON"
-},
-{
-"ami_id": "ami-0c55b159cbfafe1f0",
-"instance_type": "t3.small",
-"enable_ssm": "OFF"
-},
-{
-"ami_id": "ami-0c55b159cbfafe1f0",
-"instance_type": "t2.nano"
-}
+  {
+    "ami_id": "ami-0c55b159cbfafe1f0",
+    "instance_type": "t2.micro",
+    "subnet_id": "subnet-xxxxxxxxxxxxxxxxx",
+    "enable_ssm": "ON"
+  },
+  {
+    "ami_id": "ami-0c55b159cbfafe1f0",
+    "instance_type": "t3.small",
+    "subnet_id": "subnet-yyyyyyyyyyyyyyyyy",
+    "enable_ssm": "OFF"
+  },
+  {
+    "ami_id": "ami-0c55b159cbfafe1f0",
+    "instance_type": "t2.nano",
+    "subnet_id": "subnet-zzzzzzzzzzzzzzzzz"
+  }
 ]
