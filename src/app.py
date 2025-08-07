@@ -1,5 +1,5 @@
 import boto3
-import csv
+import json
 import os
 import urllib.parse
 
@@ -27,13 +27,20 @@ def lambda_handler(event, context):
 
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
-        lines = response['Body'].read().decode('utf-8').splitlines()
-        reader = csv.DictReader(lines)
+        content = response['Body'].read().decode('utf-8')
+        instances_to_create = json.loads(content)
 
-        for row in reader:
+        # Assume JSON content is a list
+        if not isinstance(instances_to_create, list):
+            print(f"Error: JSON file content is not a list. File: s3://{bucket}/{key}")
+            return {'status': 'failed', 'reason': 'Invalid JSON format'}
+
+        for item in instances_to_create:
             try:
-                ami_id = row.get('ami_id')
-                instance_type = row.get('instance_type')
+                # subnet_id is now a required field in the JSON
+                subnet_id = item.get('subnet_id')
+                ami_id = item.get('ami_id')
+                instance_type = item.get('instance_type')
 
                 if not all([ami_id, instance_type]):
                     print(f"Skipping row due to missing required fields (ami_id, instance_type): {row}")
@@ -65,6 +72,9 @@ def lambda_handler(event, context):
             except Exception as e:
                 print(f"Error processing row, skipping: {row}. Error: {e}")
 
+    except json.JSONDecodeError as e:
+        print(f"Fatal error: Failed to decode JSON from s3://{bucket}/{key}. Error: {e}")
+        raise e
     except Exception as e:
         print(f"A fatal error occurred while processing the file: {e}")
         raise e
