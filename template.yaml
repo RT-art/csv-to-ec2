@@ -85,10 +85,12 @@ Resources:
     Properties:
       FunctionName: !Sub "${AWS::StackName}-CsvToEc2Function"
       Handler: app.lambda_handler
-      Runtime: python3.12
+      Runtime: python3.13
       CodeUri: src/
       Timeout: 60
-      # IAM policies for this Lambda function
+      Environment:
+        Variables:
+          TARGET_SUBNET_ID: !Ref PublicSubnet
       Policies:
         # 1. Permission to read CSV files from S3 bucket
         - S3ReadPolicy:
