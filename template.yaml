@@ -2,69 +2,19 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
   Stack to automatically create EC2 instances from JSON files uploaded to S3.
-  Creates VPC, Subnet, S3 bucket, and Lambda function.
+  This stack uses existing VPC and Subnets.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the existing VPC where EC2 instances will be created.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: A list of existing Subnet IDs where EC2 instances can be created. The Lambda function will use the subnet_id specified in the JSON file.
 
 Resources:
   # ------------------------------------------------------------
-  #  Network Resources
-  # ------------------------------------------------------------
-  VPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-VPC"
-
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-IGW"
-
-  VPCGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
-
-  PublicSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true # Automatically assign public IP to EC2
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-PublicSubnet"
-
-  RouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-RouteTable"
-
-  DefaultRoute:
-    Type: AWS::EC2::Route
-    DependsOn: VPCGatewayAttachment
-    Properties:
-      RouteTableId: !Ref RouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  SubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet
-      RouteTableId: !Ref RouteTable
-
-  # ------------------------------------------------------------
-  #  IAM Role for EC2
+  #  IAM Role for EC2 (for SSM)
   # ------------------------------------------------------------
   EC2InstanceRole:
     Type: AWS::IAM::Role
@@ -115,7 +65,7 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          TARGET_SUBNET_ID: !Ref PublicSubnet
+          # This variable is now required by the Lambda function
           SSM_INSTANCE_PROFILE_ARN: !GetAtt EC2InstanceProfile.Arn
       Policies:
         # 1. Permission to read JSON files from S3 bucket
@@ -127,7 +77,8 @@ Resources:
             Action:
               - ec2:RunInstances
               - ec2:CreateTags
-            Resource: "*" # In production, specify resources more strictly
+            # In production, you might want to restrict this to the specified VPC
+            Resource: "*"
           - Effect: Allow
             Action: iam:PassRole
             Resource: !GetAtt EC2InstanceRole.Arn
@@ -148,9 +99,3 @@ Outputs:
   S3BucketName:
     Description: "S3 bucket name for uploading JSON files to create EC2 instances"
     Value: !Ref JsonFileBucket
-  VpcId:
-    Description: "ID of the created VPC"
-    Value: !Ref VPC
-  PublicSubnetId:
-    Description: "ID of the created public subnet. This is automatically used by the Lambda function."
-    Value: !Ref PublicSubnet
