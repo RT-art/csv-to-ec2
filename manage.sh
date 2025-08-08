@@ -9,28 +9,27 @@ set -e
 # SAMデプロイのアウトプット（S3バケット名など）を保存するファイル
 CONFIG_FILE=".sam_outputs"
 
-# CloudFormationのスタック名（変更可能）
+# CloudFormationのスタック名
 STACK_NAME="csv-to-ec2-stack"
 
 # AWSリージョンを自動取得。設定がなければ東京リージョンをデフォルトに
 REGION=$(aws configure get region)
 [ -z "$REGION" ] && REGION="ap-northeast-1"
 
-# --- ヘルパー関数 ---
+# --- 関数定義 ---
+
 # 使い方を表示
 usage() {
     echo "使い方: $0 {deploy|upload|delete}"
     echo
     echo "コマンド:"
-    echo "  deploy   : AWS SAMスタックをビルド・デプロイします。ネットワークリソース、S3バケット、Lambdaを作成します。"
-    echo "  upload   : S3バケットにCSVファイルをアップロードし、EC2インスタンス作成をトリガーします。"
-    echo "           : 引数なしの場合、カレントディレクトリに存在する単一の.csvファイルを自動で検出します。"
-    echo "  delete   : 作成されたすべてのAWSリソース（SAMスタック）を削除します。"
+    echo "  deploy   : AWSリソース（VPC, S3, Lambda等）をデプロイします。"
+    echo "  upload   : CSVファイルをS3にアップロードし、EC2インスタンス作成をトリガーします。"
+    echo "  delete   : 作成したすべてのAWSリソースを削除します。"
     echo
 }
 
-# --- ヘルパー関数 ---
-# 必須コマンドと設定の存在をチェック
+# 必須コマンドとAWS認証情報の存在をチェック
 check_requirements() {
     echo ">>> 前提条件を確認しています..."
     local has_error=0
@@ -39,13 +38,9 @@ check_requirements() {
     if ! command -v aws &> /dev/null; then
         echo "エラー: AWS CLI ('aws') が見つかりません。インストールしてください。" >&2
         has_error=1
-    else
-        # AWS認証情報のチェック
-        if ! aws sts get-caller-identity > /dev/null 2>&1; then
-            echo "エラー: AWS認証情報が正しく設定されていません。" >&2
-            echo "  'aws configure' を実行して認証情報を設定してください。" >&2
-            has_error=1
-        fi
+    elif ! aws sts get-caller-identity > /dev/null 2>&1; then
+        echo "エラー: AWS認証情報が正しく設定されていません。'aws configure'を実行してください。" >&2
+        has_error=1
     fi
 
     # AWS SAM CLIのチェック
@@ -54,33 +49,21 @@ check_requirements() {
         has_error=1
     fi
 
-    # Python 3.12のチェック (template.yamlのRuntime指定に基づく)
-    if ! command -v python3.12 &> /dev/null; then
-        echo "エラー: Python 3.12 ('python3.12') が見つかりません。" >&2
-        echo "  SAMがLambda関数をビルドするために必要です。インストールしてパスを通してください。" >&2
-        has_error=1
-    fi
-
     if [ "$has_error" -ne 0 ]; then
         exit 1
     fi
-
-    echo "✔ 前提条件はすべて満たされています。"
+    echo "✔ AWS CLI, SAM CLI, 認証情報は正常です。"
 }
 
-# --- メイン関数 ---
 # SAMスタックのビルドとデプロイ
 deploy_stack() {
     echo ">>> SAMアプリケーションをビルドしています..."
     sam build
 
     echo ">>> スタック '$STACK_NAME' をリージョン '$REGION' にデプロイしています..."
-    # --guided オプションは初回デプロイ時に役立ちます。2回目以降は samconfig.toml が使用されます。
     sam deploy --stack-name "$STACK_NAME" --region "$REGION" --capabilities CAPABILITY_IAM --resolve-s3 --confirm-changeset
 
     echo ">>> デプロイ成功。S3バケット名を取得しています..."
-
-    # CloudFormationスタックのアウトプットからS3バケット名を取得
     BUCKET_NAME=$(aws cloudformation describe-stacks \
         --stack-name "$STACK_NAME" \
         --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" \
@@ -88,38 +71,29 @@ deploy_stack() {
         --region "$REGION")
 
     if [ -z "$BUCKET_NAME" ]; then
-        echo "エラー: S3バケット名を取得できませんでした。"
-        echo "AWSマネジメントコンソールでスタックの状態を確認してください。"
+        echo "エラー: S3バケット名を取得できませんでした。CloudFormationスタックの出力にS3BucketNameが存在するか確認してください。" >&2
         exit 1
     fi
 
-    # 後続の 'upload' コマンドで使うため、バケット名をファイルに保存
+    # 後続コマンドで使うため、バケット名をファイルに保存
     echo "S3_BUCKET_NAME=$BUCKET_NAME" > "$CONFIG_FILE"
+    echo "REGION=$REGION" >> "$CONFIG_FILE"
 
-    echo "✔ セットアップ完了。"
-    echo "  S3バケット '$BUCKET_NAME' の準備ができました。"
-    echo "  './manage.sh upload' コマンドでEC2インスタンスを作成できます。"
+    echo "✔ セットアップ完了。S3バケット '$BUCKET_NAME' の準備ができました。"
+    echo "次に './manage.sh upload' を実行してEC2インスタンスを作成できます。"
 }
 
 # S3バケットへCSVファイルをアップロード
 upload_csv() {
     if [ ! -f "$CONFIG_FILE" ]; then
-        echo "エラー: 設定ファイル '$CONFIG_FILE' が見つかりません。"
-        echo "最初に './manage.sh deploy' を実行してください。"
+        echo "エラー: 設定ファイル '$CONFIG_FILE' が見つかりません。最初に './manage.sh deploy' を実行してください。" >&2
         exit 1
     fi
-
-    # 設定ファイルからバケット名を読み込む
     source "$CONFIG_FILE"
 
-    if [ -z "$S3_BUCKET_NAME" ]; then
-        echo "エラー: '$CONFIG_FILE' 内に S3_BUCKET_NAME が見つかりません。"
-        exit 1
-    fi
-
-    CSV_FILE="$1" # 引数で渡されたファイルパス
+    CSV_FILE="$1"
+    # ファイル指定がない場合、カレントディレクトリのCSVファイルを自動検出
     if [ -z "$CSV_FILE" ]; then
-        # 引数がない場合、カレントディレクトリから.csvファイルを自動検出
         shopt -s nullglob
         CSV_FILES=(*.csv)
         shopt -u nullglob
@@ -128,58 +102,65 @@ upload_csv() {
             CSV_FILE="${CSV_FILES[0]}"
             echo ">>> CSVファイルを自動検出しました: '$CSV_FILE'"
         elif [ ${#CSV_FILES[@]} -eq 0 ]; then
-            echo "エラー: カレントディレクトリにCSVファイルが見つかりません。"
-            echo "CSVファイルを配置するか、ファイルパスを指定してください:"
-            echo "  使用例: ./manage.sh upload sample.csv"
+            echo "エラー: アップロードするCSVファイルが見つかりません。ファイルパスを指定してください。" >&2
+            echo "使用例: ./manage.sh upload sample.csv" >&2
             exit 1
         else
-            echo "エラー: 複数のCSVファイルが見つかりました。アップロードするファイルを指定してください:"
-            printf " - %s\n" "${CSV_FILES[@]}"
-            echo "  使用例: ./manage.sh upload ${CSV_FILES[0]}"
+            echo "エラー: 複数のCSVファイルが見つかりました。アップロードするファイルを1つ指定してください。" >&2
             exit 1
         fi
     fi
 
     if [ ! -f "$CSV_FILE" ]; then
-        echo "エラー: CSVファイル '$CSV_FILE' が見つかりません。"
+        echo "エラー: CSVファイル '$CSV_FILE' が見つかりません。ファイルが存在するか、パスが正しいか確認してください。" >&2
         exit 1
     fi
 
     echo ">>> '$CSV_FILE' をバケット '$S3_BUCKET_NAME' にアップロードしています..."
     aws s3 cp "$CSV_FILE" "s3://$S3_BUCKET_NAME/"
 
-    echo "✔ ファイルがアップロードされました。EC2インスタンスの作成がトリガーされます。"
+    echo "✔ ファイルがアップロードされました。EC2インスタンスの作成が開始されます。"
 }
 
 # SAMスタックの削除
 delete_stack() {
-    echo ">>> SAMスタック '$STACK_NAME' の削除準備をしています..."
+    echo ">>> SAMスタック '$STACK_NAME' の削除を開始します..."
 
-    # 設定ファイルからバケット名を取得して、バケット内を空にする
+    # バケットが空でないとスタックを削除できないため、中身を先に空にする
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE"
         if [ -n "$S3_BUCKET_NAME" ]; then
-            echo ">>> S3バケット '$S3_BUCKET_NAME' の中身を空にしています..."
-            # バケットが存在するか確認してから削除コマンドを実行
-            if aws s3api head-bucket --bucket "$S3_BUCKET_NAME" 2>/dev/null; then
+            if aws s3api head-bucket --bucket "$S3_BUCKET_NAME" &>/dev/null; then
+                echo ">>> S3バケット '$S3_BUCKET_NAME' の中身を空にしています..."
                 aws s3 rm "s3://$S3_BUCKET_NAME/" --recursive
             else
-                echo "-> バケット '$S3_BUCKET_NAME' は既に存在しないため、スキップします。"
+                echo ">>> S3バケット '$S3_BUCKET_NAME' が存在しないため、削除をスキップします。"
             fi
         fi
+    fi
+
+    # EC2インスタンスの削除
+    INSTANCE_IDS=$(aws ec2 describe-instances \
+        --filters "Name=tag:CreatedByStack,Values=$STACK_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down,terminated" \
+        --query "Reservations[].Instances[].InstanceId" \
+        --output text \
+        --region "$REGION")
+
+    if [ -n "$INSTANCE_IDS" ]; then
+        echo ">>> EC2インスタンスを削除しています: $INSTANCE_IDS"
+        aws ec2 terminate-instances --instance-ids $INSTANCE_IDS --region "$REGION" > /dev/null
+        echo ">>> インスタンスの終了を待機しています..."
+        aws ec2 wait instance-terminated --instance-ids $INSTANCE_IDS --region "$REGION"
+        echo "✔ EC2インスタンスが削除されました。"
     else
-        echo "-> 設定ファイルが見つかりません。S3バケットのクリーンアップはスキップします。"
+        echo ">>> 削除対象のEC2インスタンスは見つかりませんでした。"
     fi
 
     echo ">>> SAMスタック '$STACK_NAME' をリージョン '$REGION' から削除します..."
-    echo "!!! 注意: この操作により、本スクリプトで作成されたすべてのAWSリソースが削除されます。!!!"
-
     sam delete --stack-name "$STACK_NAME" --region "$REGION" --no-prompts
 
-    # ローカルの設定ファイルをクリーンアップ
-    if [ -f "$CONFIG_FILE" ]; then
-        rm "$CONFIG_FILE"
-    fi
+    # ローカルの設定ファイルを削除
+    rm -f "$CONFIG_FILE"
 
     echo "✔ スタックの削除が完了しました。"
 }
@@ -189,31 +170,22 @@ delete_stack() {
 # 最初に前提条件を確認
 check_requirements
 
-# 必要なコマンドの存在チェック
-#if ! command -v sam &> /dev/null || ! command -v aws &> /dev/null; then
-#    echo "エラー: 'sam' および 'aws' CLIが必要です。"
-#    echo "これらをインストールし、AWS認証情報を設定してください。"
-#    exit 1
-#fi
-
-# メインのコマンド振り分け
+# コマンドに応じて処理を振り分け
 case "$1" in
     deploy)
         deploy_stack
         ;;
     upload)
-        # 2番目の引数（ファイル名）をupload関数に渡す
         upload_csv "$2"
         ;;
     delete)
         delete_stack
         ;;
-    ""|--help|-h) # 引数なし、またはヘルプオプションの場合
+    ""|--help|-h)
         usage
-        exit 0
         ;;
     *)
-        echo "エラー: 不明なコマンド '$1'"
+        echo "エラー: 不明なコマンド '$1'" >&2
         usage
         exit 1
         ;;
