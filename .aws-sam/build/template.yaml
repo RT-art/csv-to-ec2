@@ -111,6 +111,8 @@ Resources:
             Fn::GetAtt:
             - EC2InstanceProfile
             - Arn
+          AWS_STACK_NAME:
+            Ref: AWS::StackName
       Policies:
       - Statement:
         - Effect: Allow
@@ -154,16 +156,11 @@ Resources:
             Fn::Sub: arn:aws:s3:::${CsvFileBucket}/*
 Outputs:
   S3BucketName:
-    Description: "CSV\u30D5\u30A1\u30A4\u30EB\u3092\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\
-      \u3059\u308BS3\u30D0\u30B1\u30C3\u30C8\u540D"
     Value:
       Ref: CsvFileBucket
   VpcId:
-    Description: "\u4F5C\u6210\u3055\u308C\u305FVPC\u306EID"
     Value:
       Ref: VPC
   PublicSubnetId:
-    Description: "\u4F5C\u6210\u3055\u308C\u305F\u30D1\u30D6\u30EA\u30C3\u30AF\u30B5\
-      \u30D6\u30CD\u30C3\u30C8\u306EID"
     Value:
       Ref: PublicSubnet

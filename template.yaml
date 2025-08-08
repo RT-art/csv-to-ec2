@@ -114,6 +114,7 @@ Resources:
         Variables:
           TARGET_SUBNET_ID: !Ref PublicSubnet
           SSM_INSTANCE_PROFILE_ARN: !GetAtt EC2InstanceProfile.Arn
+          AWS_STACK_NAME: !Ref AWS::StackName
       Policies:
         - Statement:
             - Effect: Allow
