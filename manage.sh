@@ -29,6 +29,45 @@ usage() {
     echo
 }
 
+# --- ヘルパー関数 ---
+# 必須コマンドと設定の存在をチェック
+check_requirements() {
+    echo ">>> 前提条件を確認しています..."
+    local has_error=0
+
+    # AWS CLIのチェック
+    if ! command -v aws &> /dev/null; then
+        echo "エラー: AWS CLI ('aws') が見つかりません。インストールしてください。" >&2
+        has_error=1
+    else
+        # AWS認証情報のチェック
+        if ! aws sts get-caller-identity > /dev/null 2>&1; then
+            echo "エラー: AWS認証情報が正しく設定されていません。" >&2
+            echo "  'aws configure' を実行して認証情報を設定してください。" >&2
+            has_error=1
+        fi
+    fi
+
+    # AWS SAM CLIのチェック
+    if ! command -v sam &> /dev/null; then
+        echo "エラー: AWS SAM CLI ('sam') が見つかりません。インストールしてください。" >&2
+        has_error=1
+    fi
+
+    # Python 3.12のチェック (template.yamlのRuntime指定に基づく)
+    if ! command -v python3.12 &> /dev/null; then
+        echo "エラー: Python 3.12 ('python3.12') が見つかりません。" >&2
+        echo "  SAMがLambda関数をビルドするために必要です。インストールしてパスを通してください。" >&2
+        has_error=1
+    fi
+
+    if [ "$has_error" -ne 0 ]; then
+        exit 1
+    fi
+
+    echo "✔ 前提条件はすべて満たされています。"
+}
+
 # --- メイン関数 ---
 # SAMスタックのビルドとデプロイ
 deploy_stack() {
@@ -146,12 +185,16 @@ delete_stack() {
 }
 
 # --- スクリプトのエントリポイント ---
+
+# 最初に前提条件を確認
+check_requirements
+
 # 必要なコマンドの存在チェック
-if ! command -v sam &> /dev/null || ! command -v aws &> /dev/null; then
-    echo "エラー: 'sam' および 'aws' CLIが必要です。"
-    echo "これらをインストールし、AWS認証情報を設定してください。"
-    exit 1
-fi
+#if ! command -v sam &> /dev/null || ! command -v aws &> /dev/null; then
+#    echo "エラー: 'sam' および 'aws' CLIが必要です。"
+#    echo "これらをインストールし、AWS認証情報を設定してください。"
+#    exit 1
+#fi
 
 # メインのコマンド振り分け
 case "$1" in

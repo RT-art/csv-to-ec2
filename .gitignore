@@ -5,3 +5,7 @@
 # Local configuration file
 
 .sam_outputs
+
+repomix-output.xml
+
+.gitignore
